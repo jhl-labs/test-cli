@@ -92,9 +92,15 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode bool) int {
 	}
 	applyProfile(&cfg, &cf)
 
+	// A relative --output-dir is resolved against the current working directory
+	// (standard tool behavior), NOT against the target being tested. This keeps
+	// `test-cli run subdir -o reports/test` writing to ./reports/test even when
+	// the target is a subdirectory.
 	outDir := firstNonEmpty(cf.outputDir, cfg.OutputDir)
 	if !filepath.IsAbs(outDir) {
-		outDir = filepath.Join(root, outDir)
+		if wd, werr := os.Getwd(); werr == nil {
+			outDir = filepath.Join(wd, outDir)
+		}
 	}
 	formats := []string(cf.formats)
 	if len(formats) == 0 {

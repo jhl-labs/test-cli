@@ -144,6 +144,40 @@ func TestReportReRender(t *testing.T) {
 	}
 }
 
+// TestOutputDirRelativeToCWD locks in that a relative --output-dir is resolved
+// against the current working directory, not the (sub)directory target. This
+// was caught by the test-cli-action smoke test.
+func TestOutputDirRelativeToCWD(t *testing.T) {
+	tmp := t.TempDir()
+	cwd, _ := os.Getwd()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	if err := os.MkdirAll(filepath.Join(tmp, "project"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmp, "junit.xml"), []byte(
+		`<testsuites><testsuite name="s"><testcase name="ok" time="0.1"/></testsuite></testsuites>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var b bytes.Buffer
+	// Target is the subdirectory "project"; output-dir is relative.
+	code := Run([]string{"ingest", "project", "--tests", "junit.xml", "-o", "reports/test", "--format", "json"}, &b, &b)
+	if code != ExitOK {
+		t.Fatalf("exit = %d: %s", code, b.String())
+	}
+	// Report must land under CWD, not under the target subdirectory.
+	if _, err := os.Stat(filepath.Join(tmp, "reports", "test", "report.json")); err != nil {
+		t.Errorf("report not written relative to CWD: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "project", "reports", "test", "report.json")); err == nil {
+		t.Error("report incorrectly written relative to the target directory")
+	}
+}
+
 func TestVersionAndHelp(t *testing.T) {
 	var b bytes.Buffer
 	if code := Run([]string{"version"}, &b, &b); code != ExitOK {
