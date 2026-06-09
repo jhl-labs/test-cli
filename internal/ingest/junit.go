@@ -11,6 +11,9 @@ import (
 // <testsuite> root instead, which we handle by also trying junitSuite directly.
 type junitSuites struct {
 	XMLName xml.Name     `xml:"testsuites"`
+	Name    string       `xml:"name,attr"`
+	Time    float64      `xml:"time,attr"`
+	Cases   []junitCase  `xml:"testcase"`
 	Suites  []junitSuite `xml:"testsuite"`
 }
 
@@ -51,8 +54,15 @@ func looksLikeJUnit(data []byte) bool {
 func ParseJUnit(data []byte, language string) ([]model.TestSuite, error) {
 	var suites []junitSuite
 	var root junitSuites
-	if err := xml.Unmarshal(data, &root); err == nil && len(root.Suites) > 0 {
-		suites = root.Suites
+	if err := xml.Unmarshal(data, &root); err == nil && (len(root.Suites) > 0 || len(root.Cases) > 0) {
+		if len(root.Cases) > 0 {
+			suites = append(suites, junitSuite{
+				Name:  firstNonEmpty(root.Name, "tests"),
+				Time:  root.Time,
+				Cases: root.Cases,
+			})
+		}
+		suites = append(suites, root.Suites...)
 	} else {
 		// Fall back to a bare <testsuite> root (many tools emit this).
 		var single junitSuite

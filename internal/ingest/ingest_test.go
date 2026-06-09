@@ -61,6 +61,36 @@ func TestParseJUnitBareSuite(t *testing.T) {
 	}
 }
 
+func TestParseJUnitCasesDirectlyUnderSuites(t *testing.T) {
+	data := []byte(`<?xml version="1.0" encoding="utf-8"?>
+<testsuites>
+  <testcase name="extractClientInfo should extract x-real-ip" time="0.000914" classname="test"/>
+  <testcase name="failing case" time="0.000202" classname="test">
+    <failure message="want true got false">assertion failed</failure>
+  </testcase>
+</testsuites>`)
+
+	suites, err := ParseJUnit(data, "typescript")
+	if err != nil {
+		t.Fatalf("ParseJUnit: %v", err)
+	}
+	if len(suites) != 1 {
+		t.Fatalf("got %d suites, want 1", len(suites))
+	}
+	if suites[0].Name != "tests" {
+		t.Errorf("suite name = %q, want tests", suites[0].Name)
+	}
+	if len(suites[0].Cases) != 2 {
+		t.Fatalf("got %d cases, want 2", len(suites[0].Cases))
+	}
+	if suites[0].Cases[0].Status != model.StatusPassed {
+		t.Errorf("first status = %q, want passed", suites[0].Cases[0].Status)
+	}
+	if suites[0].Cases[1].Status != model.StatusFailed {
+		t.Errorf("second status = %q, want failed", suites[0].Cases[1].Status)
+	}
+}
+
 func TestParseGoJSON(t *testing.T) {
 	data := []byte(`{"Action":"run","Package":"p","Test":"TestA"}
 {"Action":"output","Package":"p","Test":"TestA","Output":"ok\n"}
