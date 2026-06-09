@@ -73,6 +73,77 @@ func TestRunGreenExitOK(t *testing.T) {
 	}
 }
 
+func TestGenerateSkillStdout(t *testing.T) {
+	var out, errb bytes.Buffer
+	code := Run([]string{"generate-skill", "--stdout"}, &out, &errb)
+	if code != ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !bytes.Contains(out.Bytes(), []byte("name: test-runner")) {
+		t.Errorf("skill missing frontmatter name:\n%s", out.String())
+	}
+	if !bytes.Contains(out.Bytes(), []byte("report.json")) {
+		t.Error("skill should reference report.json")
+	}
+}
+
+func TestGenerateSkillWritesFile(t *testing.T) {
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Run([]string{"generate-skill", "--out", dir, "--name", "qa"}, &out, &errb)
+	if code != ExitOK {
+		t.Fatalf("exit = %d: %s", code, errb.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "qa", "SKILL.md")); err != nil {
+		t.Errorf("SKILL.md not written: %v", err)
+	}
+}
+
+func TestDetectJSONOnEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Run([]string{"detect", dir, "--json"}, &out, &errb)
+	if code != ExitOK {
+		t.Fatalf("exit = %d", code)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`"languages"`)) {
+		t.Errorf("detect --json missing languages key:\n%s", out.String())
+	}
+}
+
+func TestDoctorEmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	// No languages detected -> not an environment failure.
+	if code := Run([]string{"doctor", dir}, &out, &errb); code != ExitOK {
+		t.Errorf("doctor exit = %d, want 0\n%s", code, out.String())
+	}
+}
+
+func TestReportReRender(t *testing.T) {
+	dir := t.TempDir()
+	// First produce a report.json via ingest.
+	junit := filepath.Join(dir, "junit.xml")
+	if err := os.WriteFile(junit, []byte(
+		`<testsuites><testsuite name="s"><testcase name="ok" time="0.1"/></testsuite></testsuites>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out")
+	var b bytes.Buffer
+	if code := Run([]string{"ingest", "--tests", junit, "-o", out, "--format", "json"}, &b, &b); code != ExitOK {
+		t.Fatalf("ingest exit = %d: %s", code, b.String())
+	}
+	// Now re-render from the saved report.json into markdown.
+	b.Reset()
+	code := Run([]string{"report", "--in", filepath.Join(out, "report.json"), "-o", out, "--format", "markdown"}, &b, &b)
+	if code != ExitOK {
+		t.Fatalf("report exit = %d: %s", code, b.String())
+	}
+	if _, err := os.Stat(filepath.Join(out, "report.md")); err != nil {
+		t.Errorf("report.md not produced: %v", err)
+	}
+}
+
 func TestVersionAndHelp(t *testing.T) {
 	var b bytes.Buffer
 	if code := Run([]string{"version"}, &b, &b); code != ExitOK {
