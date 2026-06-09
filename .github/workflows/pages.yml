@@ -1,0 +1,62 @@
+name: Pages
+
+# Publishes the landing page (docs/), hosts the install script at
+# https://jhl-labs.github.io/test-cli/install.sh, and a LIVE example of
+# test-cli's own HTML dashboard + coverage heatmap under /report.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false   # zero dependencies; no go.sum
+
+      - name: Build test-cli
+        run: make build VERSION=pages-${{ github.sha }}
+
+      - name: Assemble site
+        run: |
+          set -euo pipefail
+          mkdir -p _site
+          cp -r docs/* _site/
+          # Single source of truth for the installer: the repo script.
+          cp scripts/install.sh _site/install.sh
+          # Generate a live example report (test-cli testing itself).
+          ./bin/test-cli run . --lang go --profile ci --output-dir _site/report --quiet || true
+          test -f _site/report/index.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

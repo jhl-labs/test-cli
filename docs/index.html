@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>test-cli — 표준화된 다언어 테스트 & 커버리지 리포트</title>
+<meta name="description" content="python, typescript, go, rust, c#, java 테스트를 단일 바이너리로 실행하고 표준화된 테스트/커버리지 리포트와 code-cov 스타일 HTML 히트맵을 생성합니다.">
+<style>
+  :root {
+    --bg:#ffffff; --panel:#f6f8fa; --ink:#1f2328; --muted:#656d76; --border:#d0d7de;
+    --accent:#2da44e; --accent-ink:#ffffff; --code-bg:#0d1117; --code-ink:#e6edf3;
+    --high:#2da44e; --med:#d4a72c; --low:#cf222e;
+  }
+  html[data-theme="dark"] {
+    --bg:#0d1117; --panel:#161b22; --ink:#e6edf3; --muted:#8b949e; --border:#30363d;
+    --accent:#3fb950; --code-bg:#010409;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif; }
+  a { color:var(--accent); text-decoration:none; } a:hover { text-decoration:underline; }
+  .wrap { max-width:980px; margin:0 auto; padding:0 20px; }
+  header { border-bottom:1px solid var(--border); position:sticky; top:0; background:var(--bg); z-index:10; }
+  header .wrap { display:flex; align-items:center; gap:16px; height:58px; }
+  .brand { font-weight:800; font-size:18px; letter-spacing:-.02em; }
+  .brand .tag { color:var(--accent); }
+  nav { margin-left:auto; display:flex; gap:18px; align-items:center; font-size:14px; }
+  nav a { color:var(--muted); } nav a:hover { color:var(--ink); }
+  .toggle { cursor:pointer; border:1px solid var(--border); background:var(--panel); color:var(--ink);
+    border-radius:8px; padding:5px 10px; font-size:13px; }
+  .hero { padding:64px 0 36px; text-align:center; }
+  .hero h1 { font-size:42px; line-height:1.15; margin:0 0 14px; letter-spacing:-.03em; }
+  .hero p.lead { font-size:18px; color:var(--muted); max-width:680px; margin:0 auto 12px; }
+  .chips { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin:18px 0 26px; }
+  .chip { background:var(--panel); border:1px solid var(--border); border-radius:999px; padding:4px 12px; font-size:13px; color:var(--muted); }
+  .cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+  .btn { display:inline-block; padding:10px 18px; border-radius:9px; font-weight:600; font-size:14px; border:1px solid var(--border); }
+  .btn.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  .install { margin:30px auto 0; max-width:720px; }
+  pre.cmd { background:var(--code-bg); color:var(--code-ink); border-radius:10px; padding:16px 18px; overflow-x:auto;
+    font:13.5px/1.6 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; text-align:left; position:relative; }
+  pre.cmd .c { color:#7ee787; } pre.cmd .m { color:#8b949e; }
+  section.block { padding:40px 0; border-top:1px solid var(--border); }
+  h2 { font-size:24px; letter-spacing:-.02em; margin:0 0 18px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:18px; }
+  .card h3 { margin:0 0 6px; font-size:16px; }
+  .card p { margin:0; color:var(--muted); font-size:14px; }
+  .langs { display:flex; gap:10px; flex-wrap:wrap; }
+  .lang { background:var(--panel); border:1px solid var(--border); border-radius:10px; padding:10px 14px; font-weight:600; font-size:14px; }
+  table.dl { width:100%; border-collapse:collapse; font-size:14px; }
+  table.dl th, table.dl td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--border); }
+  table.dl th { color:var(--muted); font-weight:600; }
+  ol.steps { padding-left:0; list-style:none; counter-reset:s; }
+  ol.steps li { counter-increment:s; padding:10px 0 10px 40px; position:relative; border-bottom:1px solid var(--border); }
+  ol.steps li::before { content:counter(s); position:absolute; left:0; top:10px; width:26px; height:26px; border-radius:50%;
+    background:var(--accent); color:var(--accent-ink); display:grid; place-items:center; font-size:13px; font-weight:700; }
+  ol.steps code { background:var(--panel); border:1px solid var(--border); padding:1px 6px; border-radius:6px; font-size:13px; }
+  footer { border-top:1px solid var(--border); padding:28px 0; color:var(--muted); font-size:13px; text-align:center; }
+  .kbd { font:12.5px ui-monospace,monospace; }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <span class="brand">test<span class="tag">-cli</span></span>
+    <nav>
+      <a href="#install">설치</a>
+      <a href="#features">기능</a>
+      <a href="#quickstart">사용법</a>
+      <a href="report/">리포트 예시</a>
+      <a href="https://github.com/jhl-labs/test-cli">GitHub</a>
+      <button class="toggle" onclick="toggleTheme()" id="tg">🌙 다크</button>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="hero">
+    <h1>여섯 개 언어, 하나의 표준 리포트.</h1>
+    <p class="lead">
+      <strong>test-cli</strong>는 프로젝트의 언어를 자동 감지해 테스트를 <em>커버리지와 함께</em> 실행하고,
+      언어와 무관한 단일 스키마로 정규화합니다. 기계 판독용(JSON·JUnit·Cobertura)부터
+      사람용(Markdown·HTML 대시보드·code-cov 스타일 커버리지 히트맵)까지 한 번에 만듭니다.
+    </p>
+    <div class="chips">
+      <span class="chip">Python</span><span class="chip">TypeScript</span><span class="chip">Go</span>
+      <span class="chip">Rust</span><span class="chip">C# / .NET</span><span class="chip">Java / Kotlin</span>
+      <span class="chip">의존성 0 · 단일 바이너리</span><span class="chip">AI 에이전트 친화</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="#install">설치하기</a>
+      <a class="btn" href="report/">라이브 리포트 보기 →</a>
+      <a class="btn" href="https://github.com/jhl-labs/test-cli-action">GitHub Action</a>
+    </div>
+
+    <div class="install" id="install">
+      <pre class="cmd"><span class="m"># 최신 릴리스를 설치 (Linux/macOS)</span>
+curl -fsSL <span class="c">https://jhl-labs.github.io/test-cli/install.sh</span> | bash
+
+<span class="m"># 시스템 전역 설치는 sudo 사용</span>
+curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | sudo bash
+
+<span class="m"># 버전 고정</span>
+curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | VERSION=v0.1.1 bash</pre>
+    </div>
+  </section>
+
+  <section class="block" id="features">
+    <h2>왜 test-cli 인가</h2>
+    <div class="grid">
+      <div class="card"><h3>표준화된 스키마</h3><p>모든 언어를 <span class="kbd">test-cli/report@1</span> JSON 하나로 정규화 — 파이프라인과 AI 에이전트가 출력 하나만 읽으면 됩니다.</p></div>
+      <div class="card"><h3>커버리지 히트맵</h3><p>code-cov 수준의 HTML 대시보드와 줄 단위 hit/miss 히트맵을 자동 생성합니다.</p></div>
+      <div class="card"><h3>내용 기반 파싱</h3><p>JUnit·go test -json·Cobertura·LCOV·JaCoCo·Go coverprofile을 파일명이 아닌 내용으로 감지합니다.</p></div>
+      <div class="card"><h3>안정적 종료 코드</h3><p>0 통과 · 1 실패/커버리지 게이트 · 2 사용법 · 3 실행실패 · 4 환경 — CI 계약으로 고정.</p></div>
+      <div class="card"><h3>AI 에이전트 스킬</h3><p><span class="kbd">generate-skill</span>로 에이전트가 바로 쓰는 SKILL.md를 생성합니다.</p></div>
+      <div class="card"><h3>GitHub Action</h3><p><a href="https://github.com/jhl-labs/test-cli-action">test-cli-action</a>으로 설치·실행·어노테이션·Job Summary를 한 번에.</p></div>
+    </div>
+  </section>
+
+  <section class="block">
+    <h2>지원 언어 & 포맷</h2>
+    <div class="langs">
+      <span class="lang">Python · pytest → JUnit + Cobertura</span>
+      <span class="lang">TypeScript · jest → JUnit + Cobertura/LCOV</span>
+      <span class="lang">Go · go test -json + coverprofile</span>
+      <span class="lang">Rust · cargo-llvm-cov → Cobertura</span>
+      <span class="lang">C# · dotnet test → JUnit + Cobertura</span>
+      <span class="lang">Java · surefire + JaCoCo</span>
+    </div>
+  </section>
+
+  <section class="block" id="quickstart">
+    <h2>빠른 시작</h2>
+    <ol class="steps">
+      <li><code>test-cli doctor</code> — 감지된 언어의 툴체인이 준비됐는지 확인 (없으면 종료 코드 4).</li>
+      <li><code>test-cli run . --profile ci --output-dir reports/test</code> — 테스트+커버리지 실행, 리포트 생성.</li>
+      <li><code>reports/test/report.json</code> 을 읽어 결과 판단 (<span class="kbd">test.summary.failed == 0</span> 이면 통과).</li>
+      <li><code>reports/test/index.html</code> 와 <code>coverage/index.html</code> 로 대시보드·히트맵 확인.</li>
+      <li>커버리지 게이트: <code>test-cli run . --fail-under 80</code>.</li>
+    </ol>
+  </section>
+
+  <section class="block">
+    <h2>다운로드 · v0.1.1</h2>
+    <table class="dl">
+      <thead><tr><th>플랫폼</th><th>아키텍처</th><th>다운로드</th></tr></thead>
+      <tbody>
+        <tr><td>Linux</td><td>x64</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_linux_amd64.tar.gz">tar.gz</a></td></tr>
+        <tr><td>Linux</td><td>arm64</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_linux_arm64.tar.gz">tar.gz</a></td></tr>
+        <tr><td>macOS</td><td>Apple Silicon</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_darwin_arm64.tar.gz">tar.gz</a></td></tr>
+        <tr><td>macOS</td><td>Intel</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_darwin_amd64.tar.gz">tar.gz</a></td></tr>
+        <tr><td>Windows</td><td>x64</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_windows_amd64.zip">zip</a></td></tr>
+        <tr><td>Windows</td><td>arm64</td><td><a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/test-cli_v0.1.1_windows_arm64.zip">zip</a></td></tr>
+      </tbody>
+    </table>
+    <p style="margin-top:12px;color:var(--muted);font-size:13px">모든 릴리스: <a href="https://github.com/jhl-labs/test-cli/releases">github.com/jhl-labs/test-cli/releases</a> · 체크섬: <a href="https://github.com/jhl-labs/test-cli/releases/download/v0.1.1/SHA256SUMS">SHA256SUMS</a></p>
+  </section>
+</div>
+
+<footer>
+  <div class="wrap">
+    test-cli · MIT License · <a href="https://github.com/jhl-labs/test-cli">test-cli</a> ·
+    <a href="https://github.com/jhl-labs/test-cli-action">test-cli-action</a> ·
+    이 페이지의 <a href="report/">리포트 예시</a>는 test-cli가 자기 자신을 테스트해 생성합니다.
+  </div>
+</footer>
+
+<script>
+  function applyTheme(t){document.documentElement.setAttribute('data-theme',t);
+    document.getElementById('tg').textContent = t==='dark' ? '☀️ 라이트' : '🌙 다크';
+    try{localStorage.setItem('tc-theme',t);}catch(e){}}
+  function toggleTheme(){applyTheme(document.documentElement.getAttribute('data-theme')==='dark'?'light':'dark');}
+  (function(){var t;try{t=localStorage.getItem('tc-theme');}catch(e){}
+    if(!t)t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';applyTheme(t);})();
+</script>
+</body>
+</html>
