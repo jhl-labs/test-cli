@@ -11,6 +11,10 @@ code-cov style coverage heatmap).
 
 It is built to be driven by **AI agents** and to run as a **GitHub Action**.
 
+🌐 **Website & live report:** [jhl-labs.github.io/test-cli](https://jhl-labs.github.io/test-cli/) ·
+📦 [Releases](https://github.com/jhl-labs/test-cli/releases) ·
+⚙️ [GitHub Action](https://github.com/jhl-labs/test-cli-action)
+
 | | |
 |---|---|
 | **Languages** | Python · TypeScript/JavaScript · Go · Rust · C#/.NET · Java/Kotlin |
@@ -67,11 +71,14 @@ Cobertura/LCOV works out of the box — point `test-cli ingest` at the artifacts
 
 ```bash
 # Latest release (Linux/macOS):
-curl -fsSL https://raw.githubusercontent.com/jhl-labs/test-cli/main/scripts/install.sh | bash
+curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | bash
+
+# System-wide install:
+curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | sudo bash
 
 # Pin a version into a directory:
-curl -fsSL https://raw.githubusercontent.com/jhl-labs/test-cli/main/scripts/install.sh \
-  | VERSION=v0.1.0 INSTALL_DIR="$HOME/.local/bin" bash
+curl -fsSL https://jhl-labs.github.io/test-cli/install.sh \
+  | VERSION=v0.1.1 INSTALL_DIR="$HOME/.local/bin" bash
 
 # From source:
 go install github.com/jhl-labs/test-cli/cmd/test-cli@latest
