@@ -1,0 +1,227 @@
+name: Test CLI Action
+description: Run standardized tests and coverage with test-cli, publish results as annotations and a job summary, and expose machine-readable outputs for AI agents.
+
+inputs:
+  token:
+    description: GitHub token used by checkout and binary installation.
+    required: false
+    default: ${{ github.token }}
+  checkout:
+    description: Whether this action should checkout the repository before running.
+    required: false
+    default: "true"
+  repository:
+    description: Repository to checkout.
+    required: false
+    default: ${{ github.repository }}
+  ref:
+    description: Git ref to checkout.
+    required: false
+    default: ${{ github.ref }}
+  fetch-depth:
+    description: Checkout fetch depth.
+    required: false
+    default: "1"
+  version:
+    description: test-cli version to install, such as v0.1.0. Use latest for the newest release.
+    required: false
+    default: latest
+  command:
+    description: test-cli command to run (run, ingest, report).
+    required: false
+    default: run
+  target:
+    description: Path or target passed to test-cli.
+    required: false
+    default: .
+  profile:
+    description: test-cli profile (default | ci | release).
+    required: false
+    default: ci
+  languages:
+    description: Comma-separated languages to restrict to (empty = autodetect).
+    required: false
+    default: ""
+  output-dir:
+    description: Directory where test-cli writes reports.
+    required: false
+    default: reports/test
+  formats:
+    description: Comma-separated test-cli output formats.
+    required: false
+    default: stdout,json,junit,cobertura,markdown,html
+  fail-under:
+    description: Fail when total line coverage is below this percentage (0 disables).
+    required: false
+    default: "0"
+  annotation-limit:
+    description: Maximum number of GitHub Actions annotations to emit for failing tests.
+    required: false
+    default: "100"
+  job-summary:
+    description: Write a Markdown summary to the GitHub Actions job summary.
+    required: false
+    default: "true"
+  fail-on-test-failure:
+    description: Return the test-cli exit code so the job fails on test failures or coverage gate.
+    required: false
+    default: "true"
+  extra-args:
+    description: Extra arguments appended to the test-cli command.
+    required: false
+    default: ""
+
+outputs:
+  exit-code:
+    description: test-cli exit code.
+    value: ${{ steps.run.outputs.exit-code }}
+  tests-total:
+    description: Total number of tests executed.
+    value: ${{ steps.run.outputs.tests-total }}
+  tests-failed:
+    description: Number of failing tests (failures + errors).
+    value: ${{ steps.run.outputs.tests-failed }}
+  coverage-pct:
+    description: Total line coverage percentage.
+    value: ${{ steps.run.outputs.coverage-pct }}
+  passed:
+    description: "true when all tests passed and the coverage gate was satisfied."
+    value: ${{ steps.run.outputs.passed }}
+  report-dir:
+    description: Directory containing the generated reports.
+    value: ${{ inputs.output-dir }}
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout repository
+      if: ${{ inputs.checkout == 'true' }}
+      uses: actions/checkout@v4
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ inputs.ref }}
+        fetch-depth: ${{ inputs.fetch-depth }}
+        token: ${{ inputs.token }}
+
+    - name: Install test-cli
+      shell: bash
+      env:
+        TEST_CLI_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ inputs.token }}
+      run: |
+        set -euo pipefail
+        install_dir="${RUNNER_TEMP}/test-cli/bin"
+        mkdir -p "${install_dir}"
+        curl -fsSL https://raw.githubusercontent.com/jhl-labs/test-cli/main/scripts/install.sh \
+          | INSTALL_DIR="${install_dir}" VERSION="${TEST_CLI_VERSION}" bash
+        echo "${install_dir}" >> "${GITHUB_PATH}"
+        "${install_dir}/test-cli" --version
+
+    - name: Run test-cli
+      id: run
+      shell: bash
+      env:
+        TC_COMMAND: ${{ inputs.command }}
+        TC_TARGET: ${{ inputs.target }}
+        TC_PROFILE: ${{ inputs.profile }}
+        TC_LANGUAGES: ${{ inputs.languages }}
+        TC_OUTPUT_DIR: ${{ inputs.output-dir }}
+        TC_FORMATS: ${{ inputs.formats }}
+        TC_FAIL_UNDER: ${{ inputs.fail-under }}
+        TC_EXTRA_ARGS: ${{ inputs.extra-args }}
+      run: |
+        set +e
+        mkdir -p "${TC_OUTPUT_DIR}"
+
+        args=("${TC_COMMAND}" "${TC_TARGET}"
+          --profile "${TC_PROFILE}"
+          --output-dir "${TC_OUTPUT_DIR}"
+          --fail-under "${TC_FAIL_UNDER}")
+
+        IFS=',' read -ra fmts <<< "${TC_FORMATS}"
+        for f in "${fmts[@]}"; do
+          trimmed="$(echo "${f}" | xargs)"
+          [ -n "${trimmed}" ] && args+=(--format "${trimmed}")
+        done
+        if [ -n "${TC_LANGUAGES}" ]; then
+          IFS=',' read -ra langs <<< "${TC_LANGUAGES}"
+          for l in "${langs[@]}"; do
+            trimmed="$(echo "${l}" | xargs)"
+            [ -n "${trimmed}" ] && args+=(--lang "${trimmed}")
+          done
+        fi
+        if [ -n "${TC_EXTRA_ARGS}" ]; then
+          read -r -a extra <<< "${TC_EXTRA_ARGS}"
+          args+=("${extra[@]}")
+        fi
+
+        test-cli "${args[@]}"
+        code=$?
+
+        echo "exit-code=${code}" >> "${GITHUB_OUTPUT}"
+        [ "${code}" = "0" ] && echo "passed=true" >> "${GITHUB_OUTPUT}" || echo "passed=false" >> "${GITHUB_OUTPUT}"
+
+        # Extract machine-readable metrics from report.json (no jq dependency).
+        report="${TC_OUTPUT_DIR}/report.json"
+        if [ -f "${report}" ]; then
+          node -e '
+            const fs=require("fs");
+            const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));
+            const s=r.test.summary, c=r.coverage.summary.lines;
+            const out=process.env.GITHUB_OUTPUT;
+            fs.appendFileSync(out, `tests-total=${s.total}\n`);
+            fs.appendFileSync(out, `tests-failed=${s.failed+s.errors}\n`);
+            fs.appendFileSync(out, `coverage-pct=${c.pct.toFixed(1)}\n`);
+          ' "${report}"
+        fi
+        exit 0
+
+    - name: Annotate failing tests
+      shell: bash
+      env:
+        TC_OUTPUT_DIR: ${{ inputs.output-dir }}
+        ANNOTATION_LIMIT: ${{ inputs.annotation-limit }}
+      run: |
+        set -euo pipefail
+        report="${TC_OUTPUT_DIR}/report.json"
+        [ -f "${report}" ] || { echo "no report.json; skipping annotations"; exit 0; }
+        node <<'NODE'
+        const fs = require('fs');
+        const report = JSON.parse(fs.readFileSync(process.env.TC_OUTPUT_DIR + '/report.json', 'utf8'));
+        const limit = parseInt(process.env.ANNOTATION_LIMIT || '100', 10);
+        const esc = (v) => String(v ?? '').replace(/%/g,'%25').replace(/\r/g,'%0D').replace(/\n/g,'%0A');
+        let n = 0;
+        for (const suite of report.test.suites || []) {
+          for (const c of suite.cases || []) {
+            if (c.status !== 'failed' && c.status !== 'error') continue;
+            if (n >= limit) break;
+            const title = `${c.status.toUpperCase()}: ${suite.name} › ${c.name}`;
+            const msg = c.detail || c.message || title;
+            const file = suite.file ? `file=${esc(suite.file)},` : '';
+            console.log(`::error ${file}title=${esc(title)}::${esc(msg)}`);
+            n++;
+          }
+        }
+        console.log(n ? `Emitted ${n} failure annotation(s).` : 'No failing tests.');
+        NODE
+
+    - name: Write job summary
+      if: ${{ inputs.job-summary == 'true' }}
+      shell: bash
+      env:
+        TC_OUTPUT_DIR: ${{ inputs.output-dir }}
+      run: |
+        set -euo pipefail
+        md="${TC_OUTPUT_DIR}/report.md"
+        if [ -f "${md}" ]; then
+          cat "${md}" >> "${GITHUB_STEP_SUMMARY}"
+        else
+          echo "report.md not found (add 'markdown' to formats for a richer summary)." >> "${GITHUB_STEP_SUMMARY}"
+        fi
+
+    - name: Enforce result
+      if: ${{ inputs.fail-on-test-failure == 'true' && steps.run.outputs.exit-code != '0' }}
+      shell: bash
+      run: |
+        echo "test-cli exited with code ${{ steps.run.outputs.exit-code }}"
+        exit "${{ steps.run.outputs.exit-code }}"

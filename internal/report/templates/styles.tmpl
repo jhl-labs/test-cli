@@ -1,0 +1,60 @@
+{{define "styles"}}
+<style>
+  :root {
+    --bg: #f6f8fa; --panel: #ffffff; --ink: #1f2328; --muted: #656d76;
+    --border: #d0d7de; --accent: #0969da;
+    --hit: #2da44e; --hit-bg: #e6f4ea; --miss: #cf222e; --miss-bg: #ffebe9;
+    --neutral: #eaeef2;
+    --high: #2da44e; --good: #7ac142; --medium: #d4a72c; --low: #cf222e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 28px 20px 64px; }
+  header.top { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  header.top h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .crumbs { margin: 0 0 18px; font-size: 13px; color: var(--muted); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600; font-size: 12px; color: #fff; }
+  .badge.pass { background: var(--hit); } .badge.fail { background: var(--miss); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 18px 0 26px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .card .v { font-size: 26px; font-weight: 700; margin-top: 4px; }
+  .card.s-pass .v { color: var(--hit); } .card.s-fail .v { color: var(--miss); }
+  section { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 20px; overflow: hidden; }
+  section > h2 { font-size: 15px; margin: 0; padding: 12px 16px; border-bottom: 1px solid var(--border); background: #f6f8fa; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  th { color: var(--muted); font-weight: 600; }
+  tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .bar { position: relative; height: 8px; border-radius: 4px; background: var(--neutral); overflow: hidden; min-width: 90px; }
+  .bar > span { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+  .g-high { background: var(--high); } .g-good { background: var(--good); }
+  .g-medium { background: var(--medium); } .g-low { background: var(--low); }
+  .pill { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pill.g-high { color: var(--high); } .pill.g-good { color: #5a9e1f; }
+  .pill.g-medium { color: var(--medium); } .pill.g-low { color: var(--low); }
+  .empty { padding: 16px; color: var(--muted); }
+  details.fail { border-bottom: 1px solid var(--border); }
+  details.fail:last-child { border-bottom: none; }
+  details.fail > summary { padding: 10px 16px; cursor: pointer; list-style: none; }
+  details.fail > summary::-webkit-details-marker { display: none; }
+  details.fail .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:6px; background:var(--neutral); color:var(--muted); margin-right:8px; }
+  details.fail pre { margin: 0; padding: 12px 16px; background: #0d1117; color: #e6edf3; overflow-x: auto; font-size: 12px; }
+  .src { width: 100%; border-collapse: collapse; font: 12.5px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .src td { padding: 0; border: none; }
+  .src td.ln { width: 1%; text-align: right; padding: 0 10px; color: var(--muted); user-select: none; white-space: nowrap; border-right: 1px solid var(--border); }
+  .src td.hits { width: 1%; text-align: right; padding: 0 8px; color: var(--muted); user-select: none; white-space: nowrap; font-size: 11px; }
+  .src td.code { padding: 0 12px; white-space: pre; }
+  .src tr.hit td.code { background: var(--hit-bg); } .src tr.hit td.hits { color: var(--hit); }
+  .src tr.miss td.code { background: var(--miss-bg); } .src tr.miss td.hits { color: var(--miss); }
+  .src tr.miss td.ln { box-shadow: inset 3px 0 0 var(--miss); }
+  .src tr.hit td.ln { box-shadow: inset 3px 0 0 var(--hit); }
+  footer { color: var(--muted); font-size: 12px; text-align: center; margin-top: 30px; }
+  input.filter { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; margin: 12px 16px; width: calc(100% - 32px); }
+</style>
+{{end}}

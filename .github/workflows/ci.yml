@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, lint & test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Check formatting
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "These files are not gofmt-clean:"; echo "$out"; exit 1
+          fi
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (race + coverage)
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Validate shell scripts
+        run: bash -n scripts/build-release-artifacts.sh && bash -n scripts/install.sh
+
+      - name: Build binary
+        run: make build VERSION=ci-${{ github.sha }}
+
+      - name: Self-check (run test-cli on its own repo)
+        run: |
+          ./bin/test-cli detect .
+          ./bin/test-cli run . --lang go --profile ci --output-dir reports/test
+          ./bin/test-cli generate-skill --out reports/skills
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-cli-reports
+          path: reports/
+          if-no-files-found: ignore
+
+  cross-build:
+    name: Cross-compile matrix
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build all platforms
+        run: VERSION=ci INCLUDE_ARCHIVES=false bash scripts/build-release-artifacts.sh
