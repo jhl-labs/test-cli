@@ -48,7 +48,11 @@ if [ "${VERSION}" = "latest" ]; then
   resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
   VERSION="${resolved##*/tag/}"
   if [ "${VERSION}" = "${resolved}" ] || [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
-    VERSION="$(curl -fsSL "${auth[@]}" "${api}/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+    # API fallback. Read the full body into a variable first — piping curl
+    # straight into `grep -m1` makes grep close the pipe early, sending SIGPIPE
+    # to curl, which (under pipefail + set -e) would abort the script.
+    body="$(curl -fsSL "${auth[@]}" "${api}/latest" 2>/dev/null || true)"
+    VERSION="$(printf '%s' "${body}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
   fi
 fi
 if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
