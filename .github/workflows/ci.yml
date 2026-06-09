@@ -22,7 +22,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false   # zero dependencies; no go.sum
 
       - name: Check formatting
         run: |
@@ -68,6 +68,6 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false   # zero dependencies; no go.sum
       - name: Build all platforms
         run: VERSION=ci INCLUDE_ARCHIVES=false bash scripts/build-release-artifacts.sh

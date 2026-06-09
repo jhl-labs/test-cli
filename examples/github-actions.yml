@@ -21,7 +21,7 @@ jobs:
 
       - name: Run standardized tests & coverage
         id: tests
-        uses: jhl-labs/test-cli@v0.1.0
+        uses: jhl-labs/test-cli-action@main
         with:
           profile: ci
           target: .

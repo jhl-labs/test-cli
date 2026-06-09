@@ -1,0 +1,56 @@
+name: Tests (via test-cli-action)
+
+# Dogfoods test-cli on itself through the published composite action,
+# jhl-labs/test-cli-action. The CI workflow (ci.yml) builds and self-checks
+# from source; this workflow proves the released binary + Action work end to end.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The project under test is Go, so its toolchain must be present for
+      # test-cli to run `go test`.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false   # zero dependencies; no go.sum
+
+      - name: Run standardized tests & coverage
+        id: tests
+        uses: jhl-labs/test-cli-action@main
+        with:
+          checkout: "false"          # code is already checked out above
+          profile: ci
+          target: .
+          languages: go
+          fail-under: "70"
+          formats: stdout,json,junit,cobertura,markdown,html
+
+      - name: Show outputs
+        if: always()
+        run: |
+          echo "passed       = ${{ steps.tests.outputs.passed }}"
+          echo "tests-total  = ${{ steps.tests.outputs.tests-total }}"
+          echo "tests-failed = ${{ steps.tests.outputs.tests-failed }}"
+          echo "coverage-pct = ${{ steps.tests.outputs.coverage-pct }}"
+
+      - name: Upload HTML report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: reports/test
+          if-no-files-found: ignore

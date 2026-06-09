@@ -42,9 +42,16 @@ auth=()
 # --- resolve version ---
 api="https://api.github.com/repos/${REPO}/releases"
 if [ "${VERSION}" = "latest" ]; then
-  VERSION="$(curl -fsSL "${auth[@]}" "${api}/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  # Resolve the latest tag from the releases/latest redirect first — it avoids
+  # the api.github.com rate limit that unauthenticated environments hit. Fall
+  # back to the API if the redirect is unavailable.
+  resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+  VERSION="${resolved##*/tag/}"
+  if [ "${VERSION}" = "${resolved}" ] || [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
+    VERSION="$(curl -fsSL "${auth[@]}" "${api}/latest" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  fi
 fi
-if [ -z "${VERSION}" ]; then
+if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
   echo "could not resolve a release version for ${REPO}" >&2; exit 1
 fi
 

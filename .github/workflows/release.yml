@@ -30,7 +30,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
+          cache: false   # zero dependencies; no go.sum
 
       - name: Resolve version
         id: ver
@@ -78,12 +78,18 @@ jobs:
             echo '```'
           } > RELEASE_NOTES.md
 
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ steps.ver.outputs.version }}" \
-            --title "test-cli ${{ steps.ver.outputs.version }}" \
-            --notes-file RELEASE_NOTES.md \
-            ${{ inputs.prerelease == true && '--prerelease' || '' }} \
-            dist/release/*
+          tag="${{ steps.ver.outputs.version }}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists; refreshing assets."
+            gh release upload "$tag" dist/release/* --clobber
+          else
+            gh release create "$tag" \
+              --title "test-cli $tag" \
+              --notes-file RELEASE_NOTES.md \
+              ${{ inputs.prerelease == true && '--prerelease' || '' }} \
+              dist/release/*
+          fi

@@ -241,13 +241,16 @@ parent) overrides them. JSON keeps the binary dependency-free.
 
 ## GitHub Action
 
-`test-cli` ships a composite action. It installs the binary, runs it, annotates
-failing tests, writes a job summary, and exposes machine-readable outputs.
+The composite action lives in its own repository,
+[**jhl-labs/test-cli-action**](https://github.com/jhl-labs/test-cli-action)
+(mirroring the `security-cli` / `security-cli-action` split). It installs the
+binary, runs it, annotates failing tests, writes a job summary, and exposes
+machine-readable outputs.
 
 ```yaml
 - name: Run standardized tests & coverage
   id: tests
-  uses: jhl-labs/test-cli@v0.1.0
+  uses: jhl-labs/test-cli-action@main
   with:
     profile: ci
     target: .
