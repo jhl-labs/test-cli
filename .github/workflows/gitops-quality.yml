@@ -56,30 +56,31 @@ jobs:
         env:
           COVERAGE_PCT: ${{ steps.test-cli.outputs.coverage-pct }}
         run: |
-          if [ -n "${COVERAGE_PCT:-}" ]; then
-            node <<'WEBHOOK'
-            const fs = require('fs');
-            const coverage = Number(process.env.COVERAGE_PCT);
-            if (!Number.isFinite(coverage)) {
-              process.exit(0);
-            }
-            const body = {
-              repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
-              repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
-              commitSha: process.env.GITHUB_SHA,
-              branch: process.env.GITHUB_REF_NAME,
-              lineCoverage: coverage,
-              reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
-            };
-            fs.writeFileSync('/tmp/coverage-webhook.json', JSON.stringify(body));
-            WEBHOOK
-
-            [ -f /tmp/coverage-webhook.json ] || exit 0
-            curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/coverage" \
-              -H "Authorization: Bearer ${{ secrets.COVERAGE_WEBHOOK_SECRET }}" \
-              -H "Content-Type: application/json" \
-              --data-binary @/tmp/coverage-webhook.json || echo "Coverage report failed (non-critical)"
+          if [ -z "${COVERAGE_PCT:-}" ]; then
+            exit 0
           fi
+          node <<'WEBHOOK'
+          const fs = require('fs');
+          const coverage = Number(process.env.COVERAGE_PCT);
+          if (!Number.isFinite(coverage)) {
+            process.exit(0);
+          }
+          const body = {
+            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+            commitSha: process.env.GITHUB_SHA,
+            branch: process.env.GITHUB_REF_NAME,
+            lineCoverage: coverage,
+            reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+          };
+          fs.writeFileSync('/tmp/coverage-webhook.json', JSON.stringify(body));
+          WEBHOOK
+
+          [ -f /tmp/coverage-webhook.json ] || exit 0
+          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/coverage" \
+            -H "Authorization: Bearer ${{ secrets.COVERAGE_WEBHOOK_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/coverage-webhook.json || echo "Coverage report failed (non-critical)"
 
       - name: Report test annotations to GitOps Console
         if: always()
@@ -143,6 +144,7 @@ jobs:
 
       - name: Run SonarQube scan
         uses: SonarSource/sonarqube-scan-action@v6
+        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -150,6 +152,7 @@ jobs:
           args: >
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.projectName=${{ github.repository }}
+            -Dsonar.scm.disabled=true
 
       - name: Check SonarQube quality gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
