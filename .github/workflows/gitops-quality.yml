@@ -1,0 +1,237 @@
+name: GitOps Quality Metrics
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gitops-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITOPS_CONSOLE_URL: ${{ secrets.GITOPS_CONSOLE_URL || 'https://gitops.euno.work' }}
+
+jobs:
+  test-scan:
+    name: test-cli
+    runs-on: jhl-space
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run test-cli
+        id: test-cli
+        uses: jhl-labs/test-cli-action@main
+        with:
+          checkout: 'false'
+          profile: ci
+          target: .
+          output-dir: reports/test
+          formats: stdout,json,junit,cobertura,markdown,html
+          fail-under: '0'
+          annotation-limit: '200'
+          fail-on-test-failure: 'false'
+
+      - name: Annotate test summary
+        if: always()
+        run: |
+          echo "::notice title=TEST SUMMARY::total=${{ steps.test-cli.outputs.tests-total || '0' }} failed=${{ steps.test-cli.outputs.tests-failed || '0' }} coverage=${{ steps.test-cli.outputs.coverage-pct || '0' }} passed=${{ steps.test-cli.outputs.passed || 'false' }}"
+
+      - name: Report coverage to GitOps Console
+        if: always()
+        run: |
+          COVERAGE="${{ steps.test-cli.outputs.coverage-pct }}"
+          if [ -n "${COVERAGE}" ]; then
+            curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/coverage" \
+              -H "Authorization: Bearer ${{ secrets.COVERAGE_WEBHOOK_SECRET }}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"repositoryOwner\": \"${{ github.repository_owner }}\",
+                \"repositoryName\": \"$(echo ${{ github.repository }} | cut -d'/' -f2)\",
+                \"commitSha\": \"${{ github.sha }}\",
+                \"branch\": \"${{ github.ref_name }}\",
+                \"lineCoverage\": ${COVERAGE},
+                \"reportUrl\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+              }" || echo "Coverage report failed (non-critical)"
+          fi
+
+      - name: Report test annotations to GitOps Console
+        if: always()
+        env:
+          TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "${TEST_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
+            echo "Test annotations webhook skipped: GITOPS_CONSOLE_URL or TEST_WEBHOOK_SECRET is not configured"
+            exit 0
+          fi
+          if [ ! -f reports/test/report.json ]; then
+            echo "Test annotations webhook skipped: reports/test/report.json was not generated"
+            exit 0
+          fi
+          node <<'WEBHOOK'
+          const fs = require('fs');
+          const report = JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'));
+          const body = {
+            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+            commitSha: process.env.GITHUB_SHA,
+            branch: process.env.GITHUB_REF_NAME,
+            runId: process.env.GITHUB_RUN_ID,
+            runNumber: Number(process.env.GITHUB_RUN_NUMBER),
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            report,
+          };
+          fs.writeFileSync('/tmp/test-annotations-webhook.json', JSON.stringify(body));
+          WEBHOOK
+          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/test-annotations" \
+            -H "Authorization: Bearer ${TEST_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/test-annotations-webhook.json || echo "Test annotations webhook report failed (non-critical)"
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: reports/test
+          if-no-files-found: ignore
+
+  jam-analysis:
+    name: jam
+    runs-on: jhl-space
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install JAM
+        run: |
+          set -euo pipefail
+          install_dir="${RUNNER_TEMP}/jam/bin"
+          mkdir -p "${install_dir}"
+          curl -fsSL https://jhl-labs.github.io/jam/install.sh | INSTALL_DIR="${install_dir}" bash
+          echo "${install_dir}" >> "${GITHUB_PATH}"
+          "${install_dir}/jam" version
+
+      - name: Run JAM
+        run: jam scan . --out reports/jam --json --sarif --quiet
+
+      - name: Report JAM result to GitOps Console
+        if: always()
+        env:
+          JAM_WEBHOOK_SECRET: ${{ secrets.JAM_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "${JAM_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
+            echo "JAM webhook skipped: GITOPS_CONSOLE_URL or JAM_WEBHOOK_SECRET is not configured"
+            exit 0
+          fi
+          if [ ! -f reports/jam/jam-result.json ]; then
+            echo "JAM webhook skipped: reports/jam/jam-result.json was not generated"
+            exit 0
+          fi
+          node <<'WEBHOOK'
+          const fs = require('fs');
+          const result = JSON.parse(fs.readFileSync('reports/jam/jam-result.json', 'utf8'));
+          const detailCsv = fs.existsSync('reports/jam/jam-detail.csv')
+            ? fs.readFileSync('reports/jam/jam-detail.csv', 'utf8')
+            : null;
+          const body = {
+            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+            commitSha: process.env.GITHUB_SHA,
+            branch: process.env.GITHUB_REF_NAME,
+            runId: process.env.GITHUB_RUN_ID,
+            runNumber: Number(process.env.GITHUB_RUN_NUMBER),
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            result,
+            detailCsv,
+          };
+          fs.writeFileSync('/tmp/jam-webhook.json', JSON.stringify(body));
+          WEBHOOK
+          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/jam" \
+            -H "Authorization: Bearer ${JAM_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/jam-webhook.json || echo "JAM webhook report failed (non-critical)"
+
+      - name: Upload JAM reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jam-reports
+          path: reports/jam
+          if-no-files-found: ignore
+
+  security-scan:
+    name: security-cli
+    runs-on: jhl-space
+    steps:
+      - name: Run security-cli
+        uses: jhl-labs/security-cli-action@main
+        with:
+          profile: ci
+          target: .
+          output-dir: reports/security
+          formats: stdout,json,sarif
+          install-tools: 'true'
+          update-db: 'false'
+          fail-on-findings: 'false'
+          annotation-limit: '200'
+
+      - name: Report security annotations to GitOps Console
+        if: always()
+        env:
+          SECURITY_WEBHOOK_SECRET: ${{ secrets.SECURITY_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "${SECURITY_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
+            echo "Security annotations webhook skipped: GITOPS_CONSOLE_URL or SECURITY_WEBHOOK_SECRET is not configured"
+            exit 0
+          fi
+          if [ ! -f reports/security/security-report.sarif ]; then
+            echo "Security annotations webhook skipped: reports/security/security-report.sarif was not generated"
+            exit 0
+          fi
+          node <<'WEBHOOK'
+          const fs = require('fs');
+          const sarif = JSON.parse(fs.readFileSync('reports/security/security-report.sarif', 'utf8'));
+          const body = {
+            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+            commitSha: process.env.GITHUB_SHA,
+            branch: process.env.GITHUB_REF_NAME,
+            runId: process.env.GITHUB_RUN_ID,
+            runNumber: Number(process.env.GITHUB_RUN_NUMBER),
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            sarif,
+          };
+          fs.writeFileSync('/tmp/security-annotations-webhook.json', JSON.stringify(body));
+          WEBHOOK
+          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/security-annotations" \
+            -H "Authorization: Bearer ${SECURITY_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/security-annotations-webhook.json || echo "Security annotations webhook report failed (non-critical)"
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: reports/security
+          if-no-files-found: ignore
