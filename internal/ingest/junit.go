@@ -54,7 +54,7 @@ func looksLikeJUnit(data []byte) bool {
 func ParseJUnit(data []byte, language string) ([]model.TestSuite, error) {
 	var suites []junitSuite
 	var root junitSuites
-	if err := xml.Unmarshal(data, &root); err == nil && (len(root.Suites) > 0 || len(root.Cases) > 0) {
+	if err := xml.Unmarshal(data, &root); err == nil {
 		if len(root.Cases) > 0 {
 			suites = append(suites, junitSuite{
 				Name:  firstNonEmpty(root.Name, "tests"),
@@ -63,6 +63,9 @@ func ParseJUnit(data []byte, language string) ([]model.TestSuite, error) {
 			})
 		}
 		suites = append(suites, root.Suites...)
+		if root.XMLName.Local == "testsuites" && len(suites) == 0 {
+			return nil, nil
+		}
 	} else {
 		// Fall back to a bare <testsuite> root (many tools emit this).
 		var single junitSuite

@@ -91,6 +91,23 @@ func TestParseJUnitCasesDirectlyUnderSuites(t *testing.T) {
 	}
 }
 
+func TestParseJUnitEmptySuitesWrapper(t *testing.T) {
+	data := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="jest tests" tests="0" failures="0" errors="0" time="0.251">
+</testsuites>`)
+
+	if got := DetectTestFormat(data); got != FormatJUnit {
+		t.Fatalf("DetectTestFormat = %q, want junit", got)
+	}
+	suites, err := ParseJUnit(data, "typescript")
+	if err != nil {
+		t.Fatalf("ParseJUnit: %v", err)
+	}
+	if len(suites) != 0 {
+		t.Fatalf("got %d suites, want 0", len(suites))
+	}
+}
+
 func TestParseGoJSON(t *testing.T) {
 	data := []byte(`{"Action":"run","Package":"p","Test":"TestA"}
 {"Action":"output","Package":"p","Test":"TestA","Output":"ok\n"}
