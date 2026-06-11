@@ -16,6 +16,7 @@ concurrency:
 
 env:
   GITOPS_CONSOLE_URL: ${{ secrets.GITOPS_CONSOLE_URL || 'https://gitops.euno.work' }}
+  SONAR_PROJECT_KEY: jhl-labs_${{ github.event.repository.name }}
 
 jobs:
   test-scan:
@@ -59,12 +60,12 @@ jobs:
               -H "Authorization: Bearer ${{ secrets.COVERAGE_WEBHOOK_SECRET }}" \
               -H "Content-Type: application/json" \
               -d "{
-                \"repositoryOwner\": \"${{ github.repository_owner }}\",
-                \"repositoryName\": \"$(echo ${{ github.repository }} | cut -d'/' -f2)\",
-                \"commitSha\": \"${{ github.sha }}\",
-                \"branch\": \"${{ github.ref_name }}\",
-                \"lineCoverage\": ${COVERAGE},
-                \"reportUrl\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+                "repositoryOwner": "${{ github.repository_owner }}",
+                "repositoryName": "$(echo ${{ github.repository }} | cut -d'/' -f2)",
+                "commitSha": "${{ github.sha }}",
+                "branch": "${{ github.ref_name }}",
+                "lineCoverage": ${COVERAGE},
+                "reportUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
               }" || echo "Coverage report failed (non-critical)"
           fi
 
@@ -130,6 +131,89 @@ jobs:
           path: reports/test
           if-no-files-found: ignore
 
+  sonarqube-analysis:
+    name: SonarQube analysis
+    runs-on: jhl-space
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.projectName=${{ github.repository }}
+
+      - name: Check SonarQube quality gate
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        continue-on-error: true
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+  security-scan:
+    name: security-cli
+    runs-on: jhl-space
+    steps:
+      - name: Run security-cli
+        uses: jhl-labs/security-cli-action@main
+        with:
+          profile: ci
+          target: .
+          output-dir: reports/security
+          formats: stdout,json,sarif
+          install-tools: 'true'
+          update-db: 'false'
+          fail-on-findings: 'false'
+          annotation-limit: '200'
+
+      - name: Report security annotations to GitOps Console
+        if: always()
+        env:
+          SECURITY_WEBHOOK_SECRET: ${{ secrets.SECURITY_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
+        run: |
+          if [ -z "${SECURITY_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
+            echo "Security annotations webhook skipped: GITOPS_CONSOLE_URL or SECURITY_WEBHOOK_SECRET is not configured"
+            exit 0
+          fi
+          if [ ! -f reports/security/security-report.sarif ]; then
+            echo "Security annotations webhook skipped: reports/security/security-report.sarif was not generated"
+            exit 0
+          fi
+          node <<'WEBHOOK'
+          const fs = require('fs');
+          const sarif = JSON.parse(fs.readFileSync('reports/security/security-report.sarif', 'utf8'));
+          const body = {
+            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+            commitSha: process.env.GITHUB_SHA,
+            branch: process.env.GITHUB_REF_NAME,
+            runId: process.env.GITHUB_RUN_ID,
+            runNumber: Number(process.env.GITHUB_RUN_NUMBER),
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            sarif,
+          };
+          fs.writeFileSync('/tmp/security-annotations-webhook.json', JSON.stringify(body));
+          WEBHOOK
+          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/security-annotations" \
+            -H "Authorization: Bearer ${SECURITY_WEBHOOK_SECRET}" \
+            -H "Content-Type: application/json" \
+            --data-binary @/tmp/security-annotations-webhook.json || echo "Security annotations webhook failed (non-critical)"
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: reports/security
+          if-no-files-found: ignore
+
   jam-analysis:
     name: jam
     runs-on: jhl-space
@@ -183,14 +267,14 @@ jobs:
             runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             result,
-            detailCsv,
+            detailCsv
           };
           fs.writeFileSync('/tmp/jam-webhook.json', JSON.stringify(body));
           WEBHOOK
           curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/jam" \
             -H "Authorization: Bearer ${JAM_WEBHOOK_SECRET}" \
             -H "Content-Type: application/json" \
-            --data-binary @/tmp/jam-webhook.json || echo "JAM webhook report failed (non-critical)"
+            --data-binary @/tmp/jam-webhook.json || echo "JAM webhook failed (non-critical)"
 
       - name: Upload JAM reports
         if: always()
@@ -198,61 +282,4 @@ jobs:
         with:
           name: jam-reports
           path: reports/jam
-          if-no-files-found: ignore
-
-  security-scan:
-    name: security-cli
-    runs-on: jhl-space
-    steps:
-      - name: Run security-cli
-        uses: jhl-labs/security-cli-action@main
-        with:
-          profile: ci
-          target: .
-          output-dir: reports/security
-          formats: stdout,json,sarif
-          install-tools: 'true'
-          update-db: 'false'
-          fail-on-findings: 'false'
-          annotation-limit: '200'
-
-      - name: Report security annotations to GitOps Console
-        if: always()
-        env:
-          SECURITY_WEBHOOK_SECRET: ${{ secrets.SECURITY_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
-        run: |
-          if [ -z "${SECURITY_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
-            echo "Security annotations webhook skipped: GITOPS_CONSOLE_URL or SECURITY_WEBHOOK_SECRET is not configured"
-            exit 0
-          fi
-          if [ ! -f reports/security/security-report.sarif ]; then
-            echo "Security annotations webhook skipped: reports/security/security-report.sarif was not generated"
-            exit 0
-          fi
-          node <<'WEBHOOK'
-          const fs = require('fs');
-          const sarif = JSON.parse(fs.readFileSync('reports/security/security-report.sarif', 'utf8'));
-          const body = {
-            repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
-            repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
-            commitSha: process.env.GITHUB_SHA,
-            branch: process.env.GITHUB_REF_NAME,
-            runId: process.env.GITHUB_RUN_ID,
-            runNumber: Number(process.env.GITHUB_RUN_NUMBER),
-            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
-            sarif,
-          };
-          fs.writeFileSync('/tmp/security-annotations-webhook.json', JSON.stringify(body));
-          WEBHOOK
-          curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/security-annotations" \
-            -H "Authorization: Bearer ${SECURITY_WEBHOOK_SECRET}" \
-            -H "Content-Type: application/json" \
-            --data-binary @/tmp/security-annotations-webhook.json || echo "Security annotations webhook report failed (non-critical)"
-
-      - name: Upload security reports
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: security-reports
-          path: reports/security
           if-no-files-found: ignore

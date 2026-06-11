@@ -1,0 +1,25 @@
+{
+  "outputDir": "reports/test",
+  "formats": [
+    "stdout",
+    "json",
+    "junit",
+    "cobertura",
+    "markdown",
+    "html"
+  ],
+  "failUnder": 0,
+  "languages": [
+    "typescript"
+  ],
+  "commands": {
+    "typescript": [
+      [
+        "node",
+        "tests/gitops-quality/smoke-test.cjs",
+        "{out}",
+        "{root}"
+      ]
+    ]
+  }
+}
