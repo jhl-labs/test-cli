@@ -53,20 +53,32 @@ jobs:
 
       - name: Report coverage to GitOps Console
         if: always()
+        env:
+          COVERAGE_PCT: ${{ steps.test-cli.outputs.coverage-pct }}
         run: |
-          COVERAGE="${{ steps.test-cli.outputs.coverage-pct }}"
-          if [ -n "${COVERAGE}" ]; then
+          if [ -n "${COVERAGE_PCT:-}" ]; then
+            node <<'WEBHOOK'
+            const fs = require('fs');
+            const coverage = Number(process.env.COVERAGE_PCT);
+            if (!Number.isFinite(coverage)) {
+              process.exit(0);
+            }
+            const body = {
+              repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
+              repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
+              commitSha: process.env.GITHUB_SHA,
+              branch: process.env.GITHUB_REF_NAME,
+              lineCoverage: coverage,
+              reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            };
+            fs.writeFileSync('/tmp/coverage-webhook.json', JSON.stringify(body));
+            WEBHOOK
+
+            [ -f /tmp/coverage-webhook.json ] || exit 0
             curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/coverage" \
               -H "Authorization: Bearer ${{ secrets.COVERAGE_WEBHOOK_SECRET }}" \
               -H "Content-Type: application/json" \
-              -d "{
-                "repositoryOwner": "${{ github.repository_owner }}",
-                "repositoryName": "$(echo ${{ github.repository }} | cut -d'/' -f2)",
-                "commitSha": "${{ github.sha }}",
-                "branch": "${{ github.ref_name }}",
-                "lineCoverage": ${COVERAGE},
-                "reportUrl": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              }" || echo "Coverage report failed (non-critical)"
+              --data-binary @/tmp/coverage-webhook.json || echo "Coverage report failed (non-critical)"
           fi
 
       - name: Report test annotations to GitOps Console
@@ -90,19 +102,8 @@ jobs:
           const report = fs.existsSync('reports/test/report.json')
             ? JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'))
             : {
-                test: {
-                  summary: {
-                    total: asNumber(process.env.TESTS_TOTAL),
-                    failed: asNumber(process.env.TESTS_FAILED),
-                    errors: 0,
-                  },
-                  suites: [],
-                },
-                coverage: {
-                  summary: {
-                    lines: { pct: asNumber(process.env.COVERAGE_PCT) },
-                  },
-                },
+                test: { summary: { total: asNumber(process.env.TESTS_TOTAL), failed: asNumber(process.env.TESTS_FAILED), errors: 0 }, suites: [] },
+                coverage: { summary: { lines: { pct: asNumber(process.env.COVERAGE_PCT) } } },
               };
           const body = {
             repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
@@ -254,9 +255,7 @@ jobs:
           node <<'WEBHOOK'
           const fs = require('fs');
           const result = JSON.parse(fs.readFileSync('reports/jam/jam-result.json', 'utf8'));
-          const detailCsv = fs.existsSync('reports/jam/jam-detail.csv')
-            ? fs.readFileSync('reports/jam/jam-detail.csv', 'utf8')
-            : null;
+          const detailCsv = fs.existsSync('reports/jam/jam-detail.csv') ? fs.readFileSync('reports/jam/jam-detail.csv', 'utf8') : null;
           const body = {
             repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
             repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
