@@ -110,7 +110,7 @@ jobs:
             branch: process.env.GITHUB_REF_NAME,
             runId: process.env.GITHUB_RUN_ID,
             runNumber: Number(process.env.GITHUB_RUN_NUMBER),
-            runUrl: `undefined/undefined/actions/runs/undefined`,
+            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             workflowName: process.env.GITHUB_WORKFLOW,
             jobName: 'test-cli',
             report,
