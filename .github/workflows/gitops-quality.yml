@@ -72,18 +72,37 @@ jobs:
         if: always()
         env:
           TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
+          TESTS_TOTAL: ${{ steps.test-cli.outputs.tests-total || '0' }}
+          TESTS_FAILED: ${{ steps.test-cli.outputs.tests-failed || '0' }}
+          COVERAGE_PCT: ${{ steps.test-cli.outputs.coverage-pct || '0' }}
         run: |
           if [ -z "${TEST_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
             echo "Test annotations webhook skipped: GITOPS_CONSOLE_URL or TEST_WEBHOOK_SECRET is not configured"
             exit 0
           fi
-          if [ ! -f reports/test/report.json ]; then
-            echo "Test annotations webhook skipped: reports/test/report.json was not generated"
-            exit 0
-          fi
           node <<'WEBHOOK'
           const fs = require('fs');
-          const report = JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'));
+          const asNumber = (value, fallback = 0) => {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : fallback;
+          };
+          const report = fs.existsSync('reports/test/report.json')
+            ? JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'))
+            : {
+                test: {
+                  summary: {
+                    total: asNumber(process.env.TESTS_TOTAL),
+                    failed: asNumber(process.env.TESTS_FAILED),
+                    errors: 0,
+                  },
+                  suites: [],
+                },
+                coverage: {
+                  summary: {
+                    lines: { pct: asNumber(process.env.COVERAGE_PCT) },
+                  },
+                },
+              };
           const body = {
             repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
             repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
@@ -91,7 +110,9 @@ jobs:
             branch: process.env.GITHUB_REF_NAME,
             runId: process.env.GITHUB_RUN_ID,
             runNumber: Number(process.env.GITHUB_RUN_NUMBER),
-            runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+            runUrl: `undefined/undefined/actions/runs/undefined`,
+            workflowName: process.env.GITHUB_WORKFLOW,
+            jobName: 'test-cli',
             report,
           };
           fs.writeFileSync('/tmp/test-annotations-webhook.json', JSON.stringify(body));
