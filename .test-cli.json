@@ -4,7 +4,6 @@
     "stdout",
     "json",
     "junit",
-    "cobertura",
     "markdown",
     "html"
   ],

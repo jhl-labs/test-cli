@@ -44,27 +44,6 @@ const junit = '<?xml version="1.0" encoding="UTF-8"?>\n' +
   '</testsuites>\n';
 fs.writeFileSync(path.join(outDir, 'junit.xml'), junit);
 
-const relativeScript = path.relative(root, __filename).split(path.sep).join('/');
-const coverage = '<?xml version="1.0" encoding="UTF-8"?>\n' +
-  '<coverage line-rate="1" branch-rate="1" lines-covered="3" lines-valid="3" branches-covered="0" branches-valid="0" complexity="0" version="gitops-quality-smoke">\n' +
-  '  <sources><source>' + escapeXml(root) + '</source></sources>\n' +
-  '  <packages>\n' +
-  '    <package name="gitops-quality" line-rate="1" branch-rate="1" complexity="0">\n' +
-  '      <classes>\n' +
-  '        <class name="smoke-test" filename="' + escapeXml(relativeScript) + '" line-rate="1" branch-rate="1" complexity="0">\n' +
-  '          <methods/>\n' +
-  '          <lines>\n' +
-  '            <line number="1" hits="1" branch="false"/>\n' +
-  '            <line number="2" hits="1" branch="false"/>\n' +
-  '            <line number="3" hits="1" branch="false"/>\n' +
-  '          </lines>\n' +
-  '        </class>\n' +
-  '      </classes>\n' +
-  '    </package>\n' +
-  '  </packages>\n' +
-  '</coverage>\n';
-fs.writeFileSync(path.join(outDir, 'coverage.xml'), coverage);
-
 if (failures > 0) {
   process.exitCode = 1;
 }

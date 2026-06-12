@@ -41,7 +41,7 @@ jobs:
           profile: ci
           target: .
           output-dir: reports/test
-          formats: stdout,json,junit,cobertura,markdown,html
+          formats: stdout,json,junit,markdown,html
           fail-under: '0'
           annotation-limit: '200'
           fail-on-test-failure: 'false'
@@ -49,20 +49,22 @@ jobs:
       - name: Annotate test summary
         if: always()
         run: |
-          echo "::notice title=TEST SUMMARY::total=${{ steps.test-cli.outputs.tests-total || '0' }} failed=${{ steps.test-cli.outputs.tests-failed || '0' }} coverage=${{ steps.test-cli.outputs.coverage-pct || '0' }} passed=${{ steps.test-cli.outputs.passed || 'false' }}"
+          echo "::notice title=TEST SUMMARY::total=${{ steps.test-cli.outputs.tests-total || '0' }} failed=${{ steps.test-cli.outputs.tests-failed || '0' }} coverage=${{ steps.test-cli.outputs.coverage-pct || 'n/a' }} passed=${{ steps.test-cli.outputs.passed || 'false' }}"
 
       - name: Report coverage to GitOps Console
         if: always()
-        env:
-          COVERAGE_PCT: ${{ steps.test-cli.outputs.coverage-pct }}
         run: |
-          if [ -z "${COVERAGE_PCT:-}" ]; then
-            exit 0
-          fi
           node <<'WEBHOOK'
           const fs = require('fs');
-          const coverage = Number(process.env.COVERAGE_PCT);
-          if (!Number.isFinite(coverage)) {
+          if (!fs.existsSync('reports/test/report.json')) {
+            process.exit(0);
+          }
+          const report = JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'));
+          const lines = report.coverage?.summary?.lines || {};
+          const total = Number(lines.total || 0);
+          const covered = Number(lines.covered || 0);
+          const pct = Number(lines.pct);
+          if (!Number.isFinite(pct) || total <= 0) {
             process.exit(0);
           }
           const body = {
@@ -70,7 +72,9 @@ jobs:
             repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
             commitSha: process.env.GITHUB_SHA,
             branch: process.env.GITHUB_REF_NAME,
-            lineCoverage: coverage,
+            lineCoverage: pct,
+            totalLines: total,
+            coveredLines: covered,
             reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
           };
           fs.writeFileSync('/tmp/coverage-webhook.json', JSON.stringify(body));
@@ -88,7 +92,6 @@ jobs:
           TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
           TESTS_TOTAL: ${{ steps.test-cli.outputs.tests-total || '0' }}
           TESTS_FAILED: ${{ steps.test-cli.outputs.tests-failed || '0' }}
-          COVERAGE_PCT: ${{ steps.test-cli.outputs.coverage-pct || '0' }}
         run: |
           if [ -z "${TEST_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
             echo "Test annotations webhook skipped: GITOPS_CONSOLE_URL or TEST_WEBHOOK_SECRET is not configured"
@@ -104,7 +107,7 @@ jobs:
             ? JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'))
             : {
                 test: { summary: { total: asNumber(process.env.TESTS_TOTAL), failed: asNumber(process.env.TESTS_FAILED), errors: 0 }, suites: [] },
-                coverage: { summary: { lines: { pct: asNumber(process.env.COVERAGE_PCT) } } },
+                coverage: { summary: { lines: { total: 0, covered: 0 } } },
               };
           const body = {
             repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
@@ -144,7 +147,6 @@ jobs:
 
       - name: Run SonarQube scan
         uses: SonarSource/sonarqube-scan-action@v6
-        continue-on-error: true
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
