@@ -171,6 +171,20 @@ jobs:
           fetch-depth: 0
 
       - name: Run SonarQube scan
+        id: sonar-scan
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
+            -Dsonar.projectName=${{ github.repository }}
+            -Dsonar.scm.disabled=true
+
+      - name: Retry SonarQube scan
+        if: steps.sonar-scan.outcome == 'failure'
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
