@@ -65,12 +65,41 @@ func probe(bins []string) (bin, ver string) {
 
 func probeVersion(path string) string {
 	for _, arg := range []string{"--version", "version", "-version"} {
-		out, err := exec.Command(path, arg).CombinedOutput()
+		out, err := probeVersionCommand(path, arg)
 		if err == nil && len(out) > 0 {
 			return firstLine(string(out))
 		}
 	}
 	return ""
+}
+
+func probeVersionCommand(path, arg string) ([]byte, error) {
+	switch filepath.Base(path) {
+	case "pytest":
+		return exec.Command("pytest", arg).CombinedOutput()
+	case "python3":
+		return exec.Command("python3", arg).CombinedOutput()
+	case "python":
+		return exec.Command("python", arg).CombinedOutput()
+	case "npx":
+		return exec.Command("npx", arg).CombinedOutput()
+	case "node":
+		return exec.Command("node", arg).CombinedOutput()
+	case "go":
+		return exec.Command("go", arg).CombinedOutput()
+	case "cargo":
+		return exec.Command("cargo", arg).CombinedOutput()
+	case "dotnet":
+		return exec.Command("dotnet", arg).CombinedOutput()
+	case "mvn":
+		return exec.Command("mvn", arg).CombinedOutput()
+	case "gradle":
+		return exec.Command("gradle", arg).CombinedOutput()
+	case "java":
+		return exec.Command("java", arg).CombinedOutput()
+	default:
+		return nil, exec.ErrNotFound
+	}
 }
 
 func toolStatus(bin, ver string) string {
