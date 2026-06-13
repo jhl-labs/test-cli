@@ -34,6 +34,26 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install project dependencies
+        if: ${{ hashFiles('package.json') != '' }}
+        run: |
+          set -euo pipefail
+          corepack enable || true
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          elif [ -f bun.lockb ] || [ -f bun.lock ]; then
+            if ! command -v bun >/dev/null 2>&1; then
+              npm install -g bun
+            fi
+            bun install --frozen-lockfile
+          elif [ -f yarn.lock ]; then
+            yarn install --immutable || yarn install --frozen-lockfile
+          elif [ -f package-lock.json ] || [ -f npm-shrinkwrap.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
       - name: Run test-cli
         id: test-cli
         uses: jhl-labs/test-cli-action@main
