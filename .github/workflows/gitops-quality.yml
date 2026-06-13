@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - master
 
 permissions:
   contents: read
@@ -41,7 +42,7 @@ jobs:
           profile: ci
           target: .
           output-dir: reports/test
-          formats: stdout,json,junit,markdown,html
+          formats: stdout,json,junit,cobertura,markdown,html
           fail-under: '0'
           annotation-limit: '200'
           fail-on-test-failure: 'false'
@@ -53,7 +54,7 @@ jobs:
           TESTS_FAILED: ${{ steps.test-cli.outputs.tests-failed || '0' }}
           TESTS_PASSED: ${{ steps.test-cli.outputs.passed || 'false' }}
         run: |
-          node <<'WEBHOOK'
+          node <<'NODE'
           const fs = require('fs');
           const asNumber = (value, fallback = 0) => {
             const parsed = Number(value);
@@ -74,21 +75,23 @@ jobs:
           const coverage = lineTotal > 0 && Number.isFinite(linePct) ? linePct.toFixed(1) : 'n/a';
           const passed = typeof summary.passed === 'boolean' ? summary.passed : process.env.TESTS_PASSED === 'true';
           console.log(`::notice title=TEST SUMMARY::total=${total} failed=${failed} coverage=${coverage} passed=${passed}`);
-          WEBHOOK
+          NODE
 
       - name: Report coverage to GitOps Console
         if: always()
         run: |
-          node <<'WEBHOOK'
+          node <<'NODE'
           const fs = require('fs');
           if (!fs.existsSync('reports/test/report.json')) {
             process.exit(0);
           }
           const report = JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'));
           const lines = report.coverage?.summary?.lines || {};
+          const branches = report.coverage?.summary?.branches || {};
           const total = Number(lines.total || 0);
           const covered = Number(lines.covered || 0);
           const pct = Number(lines.pct);
+          const branchPct = Number(branches.pct);
           if (!Number.isFinite(pct) || total <= 0) {
             process.exit(0);
           }
@@ -98,12 +101,13 @@ jobs:
             commitSha: process.env.GITHUB_SHA,
             branch: process.env.GITHUB_REF_NAME,
             lineCoverage: pct,
+            branchCoverage: Number.isFinite(branchPct) ? branchPct : null,
             totalLines: total,
             coveredLines: covered,
             reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
           };
           fs.writeFileSync('/tmp/coverage-webhook.json', JSON.stringify(body));
-          WEBHOOK
+          NODE
 
           [ -f /tmp/coverage-webhook.json ] || exit 0
           curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/coverage" \
@@ -115,25 +119,18 @@ jobs:
         if: always()
         env:
           TEST_WEBHOOK_SECRET: ${{ secrets.TEST_WEBHOOK_SECRET || secrets.COVERAGE_WEBHOOK_SECRET }}
-          TESTS_TOTAL: ${{ steps.test-cli.outputs.tests-total || '0' }}
-          TESTS_FAILED: ${{ steps.test-cli.outputs.tests-failed || '0' }}
         run: |
           if [ -z "${TEST_WEBHOOK_SECRET:-}" ] || [ -z "${GITOPS_CONSOLE_URL:-}" ]; then
             echo "Test annotations webhook skipped: GITOPS_CONSOLE_URL or TEST_WEBHOOK_SECRET is not configured"
             exit 0
           fi
-          node <<'WEBHOOK'
+          if [ ! -f reports/test/report.json ]; then
+            echo "Test annotations webhook skipped: reports/test/report.json was not generated"
+            exit 0
+          fi
+          node <<'NODE'
           const fs = require('fs');
-          const asNumber = (value, fallback = 0) => {
-            const parsed = Number(value);
-            return Number.isFinite(parsed) ? parsed : fallback;
-          };
-          const report = fs.existsSync('reports/test/report.json')
-            ? JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'))
-            : {
-                test: { summary: { total: asNumber(process.env.TESTS_TOTAL), failed: asNumber(process.env.TESTS_FAILED), errors: 0 }, suites: [] },
-                coverage: { summary: { lines: { total: 0, covered: 0 } } },
-              };
+          const report = JSON.parse(fs.readFileSync('reports/test/report.json', 'utf8'));
           const body = {
             repositoryOwner: process.env.GITHUB_REPOSITORY_OWNER,
             repositoryName: process.env.GITHUB_REPOSITORY.split('/')[1],
@@ -147,7 +144,7 @@ jobs:
             report,
           };
           fs.writeFileSync('/tmp/test-annotations-webhook.json', JSON.stringify(body));
-          WEBHOOK
+          NODE
           curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/test-annotations" \
             -H "Authorization: Bearer ${TEST_WEBHOOK_SECRET}" \
             -H "Content-Type: application/json" \
@@ -231,7 +228,7 @@ jobs:
             echo "Security annotations webhook skipped: reports/security/security-report.sarif was not generated"
             exit 0
           fi
-          node <<'WEBHOOK'
+          node <<'NODE'
           const fs = require('fs');
           const sarif = JSON.parse(fs.readFileSync('reports/security/security-report.sarif', 'utf8'));
           const body = {
@@ -245,7 +242,7 @@ jobs:
             sarif,
           };
           fs.writeFileSync('/tmp/security-annotations-webhook.json', JSON.stringify(body));
-          WEBHOOK
+          NODE
           curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/security-annotations" \
             -H "Authorization: Bearer ${SECURITY_WEBHOOK_SECRET}" \
             -H "Content-Type: application/json" \
@@ -276,7 +273,7 @@ jobs:
           set -euo pipefail
           install_dir="${RUNNER_TEMP}/jam/bin"
           mkdir -p "${install_dir}"
-          curl -fsSL https://jhl-labs.github.io/jam/install.sh | INSTALL_DIR="${install_dir}" bash
+          curl -fsSL https://jhl-labs.github.io/jam/install.sh | VERSION=v0.16.0 INSTALL_DIR="${install_dir}" bash
           echo "${install_dir}" >> "${GITHUB_PATH}"
           "${install_dir}/jam" version
 
@@ -296,7 +293,7 @@ jobs:
             echo "JAM webhook skipped: reports/jam/jam-result.json was not generated"
             exit 0
           fi
-          node <<'WEBHOOK'
+          node <<'NODE'
           const fs = require('fs');
           const result = JSON.parse(fs.readFileSync('reports/jam/jam-result.json', 'utf8'));
           const detailPath = 'reports/jam/jam-detail.csv';
@@ -315,10 +312,10 @@ jobs:
             runUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             reportUrl: `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
             result,
-            detailCsv
+            detailCsv,
           };
           fs.writeFileSync('/tmp/jam-webhook.json', JSON.stringify(body));
-          WEBHOOK
+          NODE
           curl -sS --fail-with-body -X POST "${GITOPS_CONSOLE_URL}/api/webhook/jam" \
             -H "Authorization: Bearer ${JAM_WEBHOOK_SECRET}" \
             -H "Content-Type: application/json" \
