@@ -42,17 +42,13 @@ auth=()
 # --- resolve version ---
 api="https://api.github.com/repos/${REPO}/releases"
 if [ "${VERSION}" = "latest" ]; then
-  # Resolve the latest tag from the releases/latest redirect first — it avoids
-  # the api.github.com rate limit that unauthenticated environments hit. Fall
-  # back to the API if the redirect is unavailable.
-  resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
-  VERSION="${resolved##*/tag/}"
-  if [ "${VERSION}" = "${resolved}" ] || [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
-    # API fallback. Read the full body into a variable first — piping curl
-    # straight into `grep -m1` makes grep close the pipe early, sending SIGPIPE
-    # to curl, which (under pipefail + set -e) would abort the script.
-    body="$(curl -fsSL "${auth[@]}" "${api}/latest" 2>/dev/null || true)"
-    VERSION="$(printf '%s' "${body}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  # Prefer the API because the releases/latest redirect can lag behind the
+  # actual latest release after a new tag is published.
+  body="$(curl -fsSL "${auth[@]}" "${api}/latest" 2>/dev/null || true)"
+  VERSION="$(printf '%s' "${body}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
+  if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
+    resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+    VERSION="${resolved##*/tag/}"
   fi
 fi
 if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
