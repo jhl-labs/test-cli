@@ -73,6 +73,46 @@ func TestCommandRenderPlaceholders(t *testing.T) {
 	}
 }
 
+func TestPythonCoverageTargetFromCoverageSource(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pyproject.toml"), `
+[project]
+name = "wrong-name"
+
+[tool.coverage.run]
+source = ["k8sage"]
+`)
+
+	if got := pythonCoverageTarget(dir); got != "k8sage" {
+		t.Fatalf("pythonCoverageTarget = %q, want k8sage", got)
+	}
+}
+
+func TestPythonCoverageTargetFromProjectName(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pyproject.toml"), `
+[project]
+name = "my-tool"
+`)
+	write(t, filepath.Join(dir, "src", "my_tool", "__init__.py"), "")
+
+	if got := pythonCoverageTarget(dir); got != "my_tool" {
+		t.Fatalf("pythonCoverageTarget = %q, want my_tool", got)
+	}
+}
+
+func TestPythonCoverageTargetIgnoresTestsSource(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pyproject.toml"), `
+[tool.coverage.run]
+source = ["tests"]
+`)
+
+	if got := pythonCoverageTarget(dir); got != "." {
+		t.Fatalf("pythonCoverageTarget = %q, want fallback .", got)
+	}
+}
+
 func TestGetAndNames(t *testing.T) {
 	if Get("go") == nil {
 		t.Error("Get(go) is nil")

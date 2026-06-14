@@ -8,6 +8,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -97,9 +98,105 @@ func (c Command) Render(out, root string) []string {
 	for i, a := range c.Args {
 		a = strings.ReplaceAll(a, "{out}", out)
 		a = strings.ReplaceAll(a, "{root}", root)
+		a = strings.ReplaceAll(a, "{python-cov-target}", pythonCoverageTarget(root))
 		args[i] = a
 	}
 	return args
+}
+
+func pythonCoverageTarget(root string) string {
+	if target := pythonCoverageSourceFromPyproject(filepath.Join(root, "pyproject.toml")); target != "" {
+		return target
+	}
+	if target := pythonPackageFromPyproject(filepath.Join(root, "pyproject.toml"), root); target != "" {
+		return target
+	}
+	if target := pythonPackageFromSrc(root); target != "" {
+		return target
+	}
+	return "."
+}
+
+func pythonCoverageSourceFromPyproject(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	block := tomlBlock(string(data), "tool.coverage.run")
+	if block == "" {
+		return ""
+	}
+	match := regexp.MustCompile(`(?m)^\s*source\s*=\s*\[([^\]]+)\]`).FindStringSubmatch(block)
+	if len(match) < 2 {
+		return ""
+	}
+	for _, raw := range strings.Split(match[1], ",") {
+		source := strings.Trim(strings.TrimSpace(raw), `"'`)
+		if source != "" && source != "." && source != "tests" && !strings.HasPrefix(source, "tests/") {
+			return source
+		}
+	}
+	return ""
+}
+
+func pythonPackageFromPyproject(path, root string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	block := tomlBlock(string(data), "project")
+	if block == "" {
+		return ""
+	}
+	match := regexp.MustCompile(`(?m)^\s*name\s*=\s*["']([^"']+)["']`).FindStringSubmatch(block)
+	if len(match) < 2 {
+		return ""
+	}
+	name := strings.ReplaceAll(match[1], "-", "_")
+	if pythonPackageExists(root, name) {
+		return name
+	}
+	return ""
+}
+
+func pythonPackageFromSrc(root string) string {
+	src := filepath.Join(root, "src")
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return ""
+	}
+	var packages []string
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		if exists(filepath.Join(src, entry.Name(), "__init__.py")) {
+			packages = append(packages, entry.Name())
+		}
+	}
+	if len(packages) == 1 {
+		return packages[0]
+	}
+	return ""
+}
+
+func pythonPackageExists(root, name string) bool {
+	return exists(filepath.Join(root, "src", name, "__init__.py")) ||
+		exists(filepath.Join(root, name, "__init__.py"))
+}
+
+func tomlBlock(data, name string) string {
+	header := regexp.MustCompile(`(?m)^\s*\[` + regexp.QuoteMeta(name) + `\]\s*$`)
+	loc := header.FindStringIndex(data)
+	if loc == nil {
+		return ""
+	}
+	rest := data[loc[1]:]
+	next := regexp.MustCompile(`(?m)^\s*\[[^\]]+\]\s*$`).FindStringIndex(rest)
+	if next != nil {
+		rest = rest[:next[0]]
+	}
+	return rest
 }
 
 func exists(p string) bool {

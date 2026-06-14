@@ -15,7 +15,7 @@ func python() *Adapter {
 			Args: []string{
 				"pytest",
 				"--junitxml={out}/junit.xml",
-				"--cov=.",
+				"--cov={python-cov-target}",
 				"--cov-report=xml:{out}/coverage.xml",
 			},
 		}},
