@@ -183,6 +183,32 @@ func TestParseCobertura(t *testing.T) {
 	}
 }
 
+func TestParseCoberturaSkipsGitOpsQualitySmokeCoverage(t *testing.T) {
+	data := []byte(`<?xml version="1.0"?>
+<coverage version="gitops-quality-smoke">
+  <packages>
+    <package name="static">
+      <classes>
+        <class filename="src/a.ts">
+          <lines>
+            <line number="1" hits="1"/>
+            <line number="2" hits="1"/>
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>`)
+
+	files, err := ParseCobertura(data, "typescript")
+	if err != nil {
+		t.Fatalf("ParseCobertura: %v", err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("got %d files, want synthetic smoke coverage skipped", len(files))
+	}
+}
+
 func TestParseLCOV(t *testing.T) {
 	data := []byte(`TN:
 SF:src/index.ts

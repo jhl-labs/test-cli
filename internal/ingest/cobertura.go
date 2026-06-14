@@ -12,6 +12,7 @@ import (
 // (.NET), and cargo-llvm-cov (--cobertura).
 type coberturaRoot struct {
 	XMLName  xml.Name           `xml:"coverage"`
+	Version  string             `xml:"version,attr"`
 	Sources  []string           `xml:"sources>source"`
 	Packages []coberturaPackage `xml:"packages>package"`
 }
@@ -43,6 +44,9 @@ func ParseCobertura(data []byte, language string) ([]model.FileCoverage, error) 
 	var root coberturaRoot
 	if err := xml.Unmarshal(data, &root); err != nil {
 		return nil, err
+	}
+	if strings.EqualFold(root.Version, "gitops-quality-smoke") {
+		return nil, nil
 	}
 	files := map[string]*model.FileCoverage{}
 	var order []string
