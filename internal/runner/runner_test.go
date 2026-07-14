@@ -71,7 +71,7 @@ func TestRunExplicitIngestWithSkipDetect(t *testing.T) {
 		Config:      config.Default(),
 		NoRun:       true,
 		SkipDetect:  true,
-		IngestTests: []string{junit},
+		IngestTests: []string{junit, junit}, // exact duplicates must not double-count tests
 		Log:         &bytes.Buffer{},
 	})
 	if err != nil {
@@ -79,6 +79,54 @@ func TestRunExplicitIngestWithSkipDetect(t *testing.T) {
 	}
 	if rep.Test.Summary.Total != 1 || !rep.Test.Summary.Passing() {
 		t.Errorf("summary = %+v", rep.Test.Summary)
+	}
+}
+
+func TestExplicitGoArtifactsRetainLanguage(t *testing.T) {
+	dir := t.TempDir()
+	tests := filepath.Join(dir, "gotest.json")
+	coverage := filepath.Join(dir, "coverage.out")
+	writeFile(t, tests, `{"Action":"run","Package":"example/app","Test":"TestA"}
+{"Action":"pass","Package":"example/app","Test":"TestA","Elapsed":0.01}`)
+	writeFile(t, coverage, "mode: set\nexample/app.go:1.1,2.1 1 1\n")
+
+	rep, err := Run(context.Background(), Options{
+		Root:           dir,
+		OutDir:         filepath.Join(dir, "out"),
+		ToolVersion:    "test",
+		Config:         config.Default(),
+		NoRun:          true,
+		SkipDetect:     true,
+		IngestTests:    []string{tests},
+		IngestCoverage: []string{coverage},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Languages) != 1 || rep.Languages[0] != "go" {
+		t.Fatalf("languages = %v", rep.Languages)
+	}
+	if rep.Test.Suites[0].Language != "go" || rep.Coverage.Files[0].Language != "go" {
+		t.Fatalf("language attribution: suite=%q coverage=%q", rep.Test.Suites[0].Language, rep.Coverage.Files[0].Language)
+	}
+}
+
+func TestExplicitLanguageHintLabelsGenericArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	junit := filepath.Join(dir, "junit.xml")
+	coverage := filepath.Join(dir, "coverage.xml")
+	writeFile(t, junit, `<testsuite name="s"><testcase name="ok"/></testsuite>`)
+	writeFile(t, coverage, `<coverage><packages><package><classes><class filename="module"><lines><line number="1" hits="1"/></lines></class></classes></package></packages></coverage>`)
+	rep, err := Run(context.Background(), Options{
+		Root: dir, OutDir: filepath.Join(dir, "out"), ToolVersion: "test",
+		Languages: []string{"python"}, Config: config.Default(), NoRun: true, SkipDetect: true,
+		IngestTests: []string{junit}, IngestCoverage: []string{coverage},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Test.Suites[0].Language != "python" || rep.Coverage.Files[0].Language != "python" {
+		t.Fatalf("explicit hint lost: suite=%q coverage=%q", rep.Test.Suites[0].Language, rep.Coverage.Files[0].Language)
 	}
 }
 
@@ -104,6 +152,50 @@ func TestRunReportsBadArtifactsAsMessages(t *testing.T) {
 	}
 }
 
+func TestRunRemovesStaleRawArtifactsBeforeExecuting(t *testing.T) {
+	root := t.TempDir()
+	out := filepath.Join(root, "reports")
+	stale := filepath.Join(out, "raw", "go", "gotest.json")
+	writeFile(t, stale, `{"Action":"run","Package":"stale","Test":"TestOld"}
+{"Action":"pass","Package":"stale","Test":"TestOld","Elapsed":0.01}`)
+	cfg := config.Default()
+	cfg.Commands = map[string][][]string{"go": {{"go", "test-cli-definitely-not-a-go-command"}}}
+
+	rep, err := Run(context.Background(), Options{
+		Root: root, OutDir: out, ToolVersion: "test", Languages: []string{"go"},
+		Config: cfg, Log: &bytes.Buffer{},
+	})
+	if err == nil || rep != nil {
+		t.Fatalf("run = report %+v, err %v; want missing-current-results failure", rep, err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale raw artifact still exists: %v", err)
+	}
+}
+
+func TestCurrentArtifactsRejectsUnchangedRootFallback(t *testing.T) {
+	root := t.TempDir()
+	raw := filepath.Join(root, "raw")
+	if err := os.MkdirAll(raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artifact := filepath.Join(root, "target", "junit.xml")
+	writeFile(t, artifact, "old")
+	previous := snapshotArtifacts([]string{artifact})
+	if got := currentArtifacts([]string{artifact}, raw, previous); len(got) != 0 {
+		t.Fatalf("unchanged fallback artifact treated as current: %v", got)
+	}
+	writeFile(t, artifact, "new")
+	if got := currentArtifacts([]string{artifact}, raw, previous); len(got) != 1 || got[0] != artifact {
+		t.Fatalf("updated fallback artifact was rejected: %v", got)
+	}
+	rawArtifact := filepath.Join(raw, "junit.xml")
+	writeFile(t, rawArtifact, "fresh")
+	if got := currentArtifacts([]string{rawArtifact}, raw, nil); len(got) != 1 {
+		t.Fatalf("fresh raw artifact was rejected: %v", got)
+	}
+}
+
 func TestShellJoin(t *testing.T) {
 	got := shellJoin([]string{"go", "test", "a b", `q"x`})
 	want := `go test "a b" "q\"x"`
@@ -119,5 +211,9 @@ func TestTrimTail(t *testing.T) {
 	out := trimTail([]byte("0123456789abc"), 5)
 	if !bytes.HasSuffix(out, []byte("9abc")) || !bytes.HasPrefix(out, []byte("…")) {
 		t.Errorf("trimmed = %q", out)
+	}
+	utf8Tail := trimTail([]byte("앞부분가나다"), 7)
+	if !bytes.Equal(bytes.ToValidUTF8(utf8Tail, nil), utf8Tail) || !bytes.HasSuffix(utf8Tail, []byte("나다")) {
+		t.Errorf("UTF-8 tail = %q", utf8Tail)
 	}
 }

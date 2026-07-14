@@ -1,10 +1,68 @@
 package ingest
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jhl-labs/test-cli/internal/model"
 )
+
+func TestLoadNativeArtifactsDispatchesEveryFormat(t *testing.T) {
+	dir := t.TempDir()
+	testCases := []struct {
+		name, format, data string
+	}{
+		{"junit.xml", FormatJUnit, `<testsuite name="suite"><testcase name="passes"/></testsuite>`},
+		{"gotest.json", FormatGoJSON, "{\"Action\":\"run\",\"Package\":\"example/p\",\"Test\":\"TestPass\"}\n{\"Action\":\"pass\",\"Package\":\"example/p\",\"Test\":\"TestPass\",\"Elapsed\":0.01}\n"},
+	}
+	for _, tc := range testCases {
+		path := filepath.Join(dir, tc.name)
+		if err := os.WriteFile(path, []byte(tc.data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		suites, format, err := LoadTests(path, "python")
+		if err != nil || format != tc.format || len(suites) == 0 {
+			t.Errorf("LoadTests(%s) = format %q, suites %d, err %v", tc.name, format, len(suites), err)
+		}
+	}
+
+	coverageCases := []struct {
+		name, format, data string
+	}{
+		{"coverage.out", FormatGoCover, "mode: set\nexample/a.go:1.1,2.1 1 1\n"},
+		{"cobertura.xml", FormatCobertura, `<coverage><packages><package><classes><class filename="a.py"><lines><line number="1" hits="1"/></lines></class></classes></package></packages></coverage>`},
+		{"lcov.info", FormatLCOV, "SF:a.js\nDA:1,1\nend_of_record\n"},
+		{"jacoco.xml", FormatJaCoCo, `<!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd"><report name="app"><package name="p"><sourcefile name="A.java"><line nr="1" mi="0" ci="1"/></sourcefile></package></report>`},
+	}
+	for _, tc := range coverageCases {
+		path := filepath.Join(dir, tc.name)
+		if err := os.WriteFile(path, []byte(tc.data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		files, format, err := LoadCoverage(path, "python")
+		if err != nil || format != tc.format || len(files) == 0 {
+			t.Errorf("LoadCoverage(%s) = format %q, files %d, err %v", tc.name, format, len(files), err)
+		}
+	}
+
+	unknown := filepath.Join(dir, "unknown.txt")
+	if err := os.WriteFile(unknown, []byte("not a supported artifact"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := LoadTests(unknown, ""); err == nil {
+		t.Error("unknown test artifact should fail")
+	}
+	if _, _, err := LoadCoverage(unknown, ""); err == nil {
+		t.Error("unknown coverage artifact should fail")
+	}
+	if _, _, err := LoadTests(filepath.Join(dir, "missing"), ""); err == nil {
+		t.Error("missing test artifact should fail")
+	}
+	if _, _, err := LoadCoverage(filepath.Join(dir, "missing"), ""); err == nil {
+		t.Error("missing coverage artifact should fail")
+	}
+}
 
 func TestDetectAndParseJUnit(t *testing.T) {
 	data := []byte(`<?xml version="1.0"?>
@@ -140,6 +198,21 @@ func TestParseGoJSON(t *testing.T) {
 	}
 	if fail.Message != "boom" {
 		t.Errorf("TestB message = %q, want boom", fail.Message)
+	}
+}
+
+func TestParseGoJSONRecoversSubSecondDurationFromEventTimes(t *testing.T) {
+	data := []byte(`{"Time":"2026-01-01T00:00:00Z","Action":"run","Package":"p","Test":"TestFast"}
+{"Time":"2026-01-01T00:00:00.015Z","Action":"pass","Package":"p","Test":"TestFast","Elapsed":0}`)
+	suites, err := ParseGoJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(suites) != 1 || len(suites[0].Cases) != 1 {
+		t.Fatalf("unexpected suites: %+v", suites)
+	}
+	if got := suites[0].Cases[0].DurationMs; got != 15 {
+		t.Errorf("duration = %v ms, want 15", got)
 	}
 }
 

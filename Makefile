@@ -1,4 +1,4 @@
-.PHONY: build test lint vet fmt fmt-check tidy clean install run-self release-dry
+.PHONY: build test test-go test-smoke lint vet fmt fmt-check tidy clean install run-self release-dry
 
 BINARY  ?= bin/test-cli
 PKG     := github.com/jhl-labs/test-cli
@@ -15,11 +15,17 @@ build:
 	mkdir -p bin
 	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/test-cli
 
-test:
+test: test-go test-smoke
+
+test-go:
 	go test ./...
 
+test-smoke:
+	node tests/gitops-quality/smoke-test.cjs reports/test/raw/typescript .
+	test -s reports/test/raw/typescript/junit.xml
+
 # Race-enabled tests with a coverage profile, for CI.
-test-cover:
+test-cover: test-smoke
 	go test -race -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -1
 

@@ -2,10 +2,11 @@
   "outputDir": "reports/test",
   "formats": ["stdout", "json", "junit", "cobertura", "markdown", "html"],
   "failUnder": 80,
+  "failQuality": 70,
   "languages": ["go", "python"],
   "commands": {
     "typescript": [
-      ["npx", "--yes", "vitest", "run", "--coverage", "--coverage.reporter=cobertura", "--reporter=junit", "--outputFile={out}/junit.xml"]
+      ["npx", "--no-install", "vitest", "run", "--coverage", "--coverage.reporter=cobertura", "--coverage.reportsDirectory={out}", "--reporter=junit", "--outputFile={out}/junit.xml"]
     ],
     "java": [
       ["./gradlew", "test", "jacocoTestReport"]

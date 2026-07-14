@@ -29,6 +29,13 @@ func TestLoadAndMergeOverrides(t *testing.T) {
 	  "outputDir": "out/reports",
 	  "formats": ["json","html"],
 	  "failUnder": 85,
+	  "failQuality": 70,
+	  "baseline": "reports/main.json",
+	  "failOnRegression": true,
+	  "history": ["reports/one.json", "reports/two.json"],
+	  "failOnFlaky": true,
+	  "diffBase": "origin/main",
+	  "failDiffCoverage": 85,
 	  "languages": ["go"],
 	  "commands": {"typescript": [["npx","vitest","run"]]}
 	}`
@@ -44,6 +51,18 @@ func TestLoadAndMergeOverrides(t *testing.T) {
 	}
 	if cfg.FailUnder != 85 {
 		t.Errorf("failUnder = %v", cfg.FailUnder)
+	}
+	if cfg.FailQuality != 70 {
+		t.Errorf("failQuality = %v", cfg.FailQuality)
+	}
+	if cfg.Baseline != "reports/main.json" || !cfg.FailOnRegression {
+		t.Errorf("baseline config = %q, failOnRegression = %v", cfg.Baseline, cfg.FailOnRegression)
+	}
+	if len(cfg.History) != 2 || cfg.History[0] != "reports/one.json" || !cfg.FailOnFlaky {
+		t.Errorf("history config = %v, failOnFlaky = %v", cfg.History, cfg.FailOnFlaky)
+	}
+	if cfg.DiffBase != "origin/main" || cfg.FailDiffCoverage != 85 {
+		t.Errorf("diff config = %q, failDiffCoverage = %v", cfg.DiffBase, cfg.FailDiffCoverage)
 	}
 	if len(cfg.Formats) != 2 || cfg.Formats[0] != "json" {
 		t.Errorf("formats = %v", cfg.Formats)

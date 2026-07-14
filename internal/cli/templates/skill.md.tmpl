@@ -1,6 +1,6 @@
 ---
 name: {{.Name}}
-description: Run standardized tests and coverage with test-cli across python, typescript, go, rust, csharp, and java, and read the normalized report.json. Use when asked to run tests, measure coverage, produce a test/coverage report, or gate a change on test results.
+description: Run standardized tests, coverage, and evidence-based QA diagnostics with test-cli across python, typescript, go, rust, csharp, and java, and read the normalized report.json. Use when asked to run or statically inspect tests, measure coverage, produce a QA report, or gate a change on test quality.
 ---
 
 # {{.Title}}
@@ -28,6 +28,18 @@ test-cli run . --lang go
 
 # Parse existing artifacts without re-running tests (any framework).
 test-cli ingest --tests junit.xml --coverage coverage.xml --output-dir reports/test
+
+# Static test-code inspection; never executes project commands.
+test-cli analyze . --format stdout,json,html
+
+# Compare the change to a saved main-branch report and gate regressions.
+test-cli run . --baseline reports/main/report.json --fail-on-regression
+
+# Use two prior reports plus the current run to detect/gate repeated flakiness.
+test-cli run . --history reports/run-1.json --history reports/run-2.json --fail-on-flaky
+
+# Gate executable production lines changed relative to the main branch.
+test-cli run . --diff-base origin/main --fail-diff-coverage 80
 ```
 
 ## Always read report.json
@@ -42,6 +54,15 @@ Key fields:
   `message`, `detail` (failure output)
 - `coverage.summary.lines` → `{covered, total, pct}`; same for `branches`
 - `coverage.files[]` → per-file `lines`/`branches` and `lineHits[]`
+- `quality` → transparent `score`, `grade`, `risk`, weighted `dimensions[]`,
+  stable actionable `findings[]`, `slowTests[]`, and `coverageHotspots[]`
+- `quality.static` → per-language source/test inventory and located test smells
+- `quality.comparison` → score/test/duration/coverage deltas, new and resolved
+  failures, file-level regressions/improvements, and `regressed`
+- `quality.history` → multi-run metric slopes/samples and `flakyTests[]` with
+  observation counts, pass/fail counts, failure rate, and recent statuses
+- `quality.changes` → Git base, changed production files/lines, patch coverage,
+  files missing coverage evidence, and exact uncovered changed line numbers
 - `languages` → which languages contributed results
 
 A run is green when `test.summary.failed == 0 && test.summary.errors == 0`.
@@ -51,32 +72,36 @@ A run is green when `test.summary.failed == 0 && test.summary.errors == 0`.
 | Code | Meaning | Agent action |
 |------|---------|--------------|
 | 0 | Tests passed, coverage gate satisfied | Proceed |
-| 1 | Test failures OR coverage below `--fail-under` | Read failing cases in report.json, fix, re-run |
+| 1 | Test failures OR an enabled coverage/quality/regression/flaky/changed-line gate failed | Read failures and the relevant `quality` comparison/history/changes evidence, then fix and re-run |
 | 2 | Bad arguments | Fix the command |
-| 3 | Could not run/parse (no artifacts) | Run `test-cli doctor`; check the toolchain |
+| 3 | Could not run/parse (no artifacts) | Run `test-cli doctor`; check the required runner/reporter capabilities |
 | 4 | Toolchain missing | Install the language's test tools |
 
 ## Recommended agent loop
 
-1. `test-cli doctor` — confirm the toolchain exists (exit 4 = install tools).
+1. `test-cli doctor` — confirm every required runner, coverage plugin, and reporter is ready (exit 4 = fix the environment).
 2. `test-cli run . --profile ci --output-dir reports/test`
 3. Read `reports/test/report.json`.
 4. If exit code is 1, inspect `test.suites[].cases[]` where `status` is
    `failed`/`error`; the `detail` field holds the framework output. Fix and
    repeat from step 2.
-5. Open `reports/test/index.html` (and `reports/test/coverage/index.html`) for a
-   human-facing dashboard and a code-cov style coverage heatmap.
+5. Open `reports/test/index.html`, `reports/test/insights.html`, and
+   `reports/test/coverage/index.html` for diagnostics, duration/risk heatmaps,
+   changed-file risk maps, run trends/flaky timelines, coverage tree/treemap,
+   and source line heatmaps.
 
 ## Other commands
 
 - `test-cli detect [path]` — list detected languages and whether the toolchain is ready (`--json` for structured output).
-- `test-cli report --in reports/test/report.json` — re-render HTML/markdown from a saved report without re-running.
+- `test-cli report --in reports/test/report.json --source-root .` — re-render HTML/markdown from a saved report without re-running; source access is explicit.
+- `test-cli analyze [path]` — scan test code and ingest existing artifacts without executing tests.
 - `test-cli version` — print the binary version.
 
 ## Output formats (`--format`, repeatable or comma-separated)
 
 `stdout` (summary), `json` (report.json — read this), `junit` (junit.xml),
-`cobertura` (coverage.cobertura.xml), `markdown` (report.md), `html` (dashboard
-+ coverage heatmap under `coverage/`).
+`cobertura` (coverage.cobertura.xml), `markdown` (report.md), `html` (dashboard,
+QA insights, changed-file patch coverage maps, multi-run trend/flaky timelines,
+coverage tree/treemap, risk and duration heatmaps).
 
 Generated by `test-cli generate-skill` ({{.ToolVersion}}).

@@ -1,13 +1,16 @@
 package runner
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // shellJoin renders an argv slice for display, quoting args with spaces.
 func shellJoin(args []string) string {
 	parts := make([]string, len(args))
 	for i, a := range args {
-		if strings.ContainsAny(a, " \t\"'") {
-			parts[i] = "\"" + strings.ReplaceAll(a, "\"", "\\\"") + "\""
+		if strings.ContainsAny(a, " \t\r\n\"'") {
+			parts[i] = strconv.Quote(a)
 		} else {
 			parts[i] = a
 		}
@@ -21,6 +24,10 @@ func trimTail(out []byte, n int) []byte {
 	if len(out) <= n {
 		return out
 	}
-	tail := out[len(out)-n:]
+	start := len(out) - max(0, n)
+	for start < len(out) && out[start]&0xc0 == 0x80 {
+		start++
+	}
+	tail := out[start:]
 	return append([]byte("…(truncated)…\n"), tail...)
 }

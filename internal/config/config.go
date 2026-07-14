@@ -26,6 +26,22 @@ type Config struct {
 	// FailUnder fails the run when total line coverage is below this percentage
 	// (0 disables the gate).
 	FailUnder float64 `json:"failUnder"`
+	// FailQuality fails the run when the standardized QA score is below this
+	// value (0 disables the gate).
+	FailQuality int `json:"failQuality"`
+	// Baseline is an optional report.json used for regression comparison.
+	Baseline string `json:"baseline"`
+	// FailOnRegression fails when an explicit baseline comparison regresses.
+	FailOnRegression bool `json:"failOnRegression"`
+	// History lists prior report.json files used for trend and flaky analysis.
+	History []string `json:"history"`
+	// FailOnFlaky fails when repeated pass/fail evidence identifies flaky tests.
+	FailOnFlaky bool `json:"failOnFlaky"`
+	// DiffBase is an optional Git ref used for changed-line coverage analysis.
+	DiffBase string `json:"diffBase"`
+	// FailDiffCoverage fails when changed executable-line coverage is below the
+	// configured percentage (0 disables the gate).
+	FailDiffCoverage float64 `json:"failDiffCoverage"`
 	// Commands overrides the default test command for a language, e.g.
 	// {"typescript": [["npx","vitest","run","--coverage"]]}. Each command is an
 	// argv slice; {out} and {root} placeholders are supported.
@@ -102,6 +118,27 @@ func merge(base *Config, override Config) {
 	}
 	if override.FailUnder > 0 {
 		base.FailUnder = override.FailUnder
+	}
+	if override.FailQuality > 0 {
+		base.FailQuality = override.FailQuality
+	}
+	if override.Baseline != "" {
+		base.Baseline = override.Baseline
+	}
+	if override.FailOnRegression {
+		base.FailOnRegression = true
+	}
+	if len(override.History) > 0 {
+		base.History = override.History
+	}
+	if override.FailOnFlaky {
+		base.FailOnFlaky = true
+	}
+	if override.DiffBase != "" {
+		base.DiffBase = override.DiffBase
+	}
+	if override.FailDiffCoverage > 0 {
+		base.FailDiffCoverage = override.FailDiffCoverage
 	}
 	if len(override.Commands) > 0 {
 		base.Commands = override.Commands

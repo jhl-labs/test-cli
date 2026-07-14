@@ -21,6 +21,17 @@ type Command struct {
 	Stdout string
 }
 
+// Probe describes one capability required by an adapter's default command.
+// Every probe must execute successfully; Contains optionally requires a token
+// in the combined output (useful for plugins exposed through a parent tool).
+type Probe struct {
+	Label          string
+	Args           []string
+	Files          []string
+	Contains       string
+	ExecutableOnly bool
+}
+
 // Adapter is the declarative description of how to test one language.
 type Adapter struct {
 	Name     string   // canonical id: python, typescript, go, rust, csharp, java
@@ -32,7 +43,7 @@ type Adapter struct {
 	// resolved relative to the raw output dir first, then the project root.
 	TestGlobs []string
 	CovGlobs  []string
-	Doctor    []string // candidate executables; the first found is reported
+	Checks    []Probe // capabilities required by the default command
 	DocsURL   string
 }
 
@@ -90,6 +101,71 @@ func (a *Adapter) Present(root string) bool {
 		}
 	}
 	return false
+}
+
+// InferSourceLanguage returns the canonical language id for a source path.
+// It is used when a generic coverage format does not carry ecosystem metadata.
+func InferSourceLanguage(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".py":
+		return "python"
+	case ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs":
+		return "typescript"
+	case ".go":
+		return "go"
+	case ".rs":
+		return "rust"
+	case ".cs":
+		return "csharp"
+	case ".java", ".kt", ".kts":
+		return "java"
+	default:
+		return ""
+	}
+}
+
+// CommandsFor returns the default commands selected for this project. JVM
+// projects are dispatched to Maven or Gradle from their build markers instead
+// of unconditionally invoking Maven.
+func (a *Adapter) CommandsFor(root string) []Command {
+	if a.Name != "java" {
+		return a.Commands
+	}
+	if exists(filepath.Join(root, "pom.xml")) {
+		// prepare-agent is required for a clean checkout; report alone only
+		// renders a pre-existing jacoco.exec file and can silently produce no
+		// coverage on first run.
+		return []Command{{Args: []string{"mvn", "-B", "-Dmaven.test.failure.ignore=true", "org.jacoco:jacoco-maven-plugin:prepare-agent", "test", "org.jacoco:jacoco-maven-plugin:report"}}}
+	}
+	gradle := gradleExecutable(root)
+	return []Command{{Args: []string{gradle, "--no-daemon", "--continue", "test", "jacocoTestReport"}}}
+}
+
+// CapabilityProbes returns the exact prerequisites for CommandsFor. Gradle's
+// JaCoCo report task is checked because an installed Gradle binary alone cannot
+// produce the artifact that test-cli promises to ingest.
+func (a *Adapter) CapabilityProbes(root string) []Probe {
+	if a.Name != "java" {
+		return a.Checks
+	}
+	if exists(filepath.Join(root, "pom.xml")) {
+		return []Probe{{Label: "Maven", Args: []string{"mvn", "--version"}}}
+	}
+	gradle := gradleExecutable(root)
+	return []Probe{
+		{Label: "Gradle", Args: []string{gradle, "--version"}},
+		{Label: "Gradle jacocoTestReport task", Args: []string{gradle, "--no-daemon", "tasks", "--all", "--console=plain"}, Contains: "jacocoTestReport"},
+	}
+}
+
+func gradleExecutable(root string) string {
+	if exists(filepath.Join(root, "gradlew")) {
+		return "./gradlew"
+	}
+	if exists(filepath.Join(root, "gradlew.bat")) {
+		return "gradlew.bat"
+	}
+	return "gradle"
 }
 
 // Render replaces {out} and {root} placeholders in a command's arguments.
@@ -225,28 +301,34 @@ func globMatch(root, pattern string) bool {
 	return false
 }
 
-// FindArtifacts resolves the given globs relative to out then root, returning a
-// de-duplicated, sorted list of existing files. Patterns containing "**" are
-// resolved with a recursive directory walk (filepath.Glob does not support it).
-func FindArtifacts(globs []string, out, root string) []string {
+// FindArtifacts resolves globs from the fresh raw output directory first. The
+// project root is only used as a fallback, which prevents stale root artifacts
+// from being combined with the current run. Excluded directories (normally the
+// rendered report output) are never considered during root fallback scans.
+func FindArtifacts(globs []string, out, root string, excluded ...string) []string {
+	if matches := findArtifactsIn(globs, out); len(matches) > 0 {
+		return matches
+	}
+	return findArtifactsIn(globs, root, excluded...)
+}
+
+func findArtifactsIn(globs []string, base string, excluded ...string) []string {
 	set := map[string]struct{}{}
 	add := func(m string) {
-		if fi, err := os.Stat(m); err == nil && !fi.IsDir() {
+		if fi, err := os.Stat(m); err == nil && !fi.IsDir() && !pathExcluded(m, excluded) {
 			set[m] = struct{}{}
 		}
 	}
 	for _, g := range globs {
-		for _, base := range []string{out, root} {
-			if strings.Contains(g, "**") {
-				for _, m := range recursiveGlob(base, g) {
-					add(m)
-				}
-				continue
-			}
-			matches, _ := filepath.Glob(filepath.Join(base, g))
-			for _, m := range matches {
+		if strings.Contains(g, "**") {
+			for _, m := range recursiveGlob(base, g, excluded...) {
 				add(m)
 			}
+			continue
+		}
+		matches, _ := filepath.Glob(filepath.Join(base, g))
+		for _, m := range matches {
+			add(m)
 		}
 	}
 	out2 := make([]string, 0, len(set))
@@ -259,7 +341,7 @@ func FindArtifacts(globs []string, out, root string) []string {
 
 // recursiveGlob matches a "**"-containing pattern by walking base and testing
 // each file's base-relative path against the simplified pattern.
-func recursiveGlob(base, pattern string) []string {
+func recursiveGlob(base, pattern string, excluded ...string) []string {
 	// Reduce "a/**/b.xml" to a final-segment match on "b.xml".
 	last := pattern
 	if i := strings.LastIndex(pattern, "**/"); i >= 0 {
@@ -267,7 +349,16 @@ func recursiveGlob(base, pattern string) []string {
 	}
 	var matches []string
 	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if path != base && pathExcluded(path, excluded) {
+				return filepath.SkipDir
+			}
+			if path != base && artifactIgnoredDir(d.Name()) {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if ok, _ := filepath.Match(last, d.Name()); ok {
@@ -276,4 +367,34 @@ func recursiveGlob(base, pattern string) []string {
 		return nil
 	})
 	return matches
+}
+
+func artifactIgnoredDir(name string) bool {
+	switch strings.ToLower(name) {
+	case ".git", ".hg", ".svn", "node_modules", "vendor", "reports", "dist", "out", ".venv", "venv", ".tox", ".pytest_cache", ".mypy_cache":
+		return true
+	default:
+		return false
+	}
+}
+
+func pathExcluded(path string, excluded []string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	for _, dir := range excluded {
+		if dir == "" {
+			continue
+		}
+		ex, err := filepath.Abs(dir)
+		if err != nil {
+			continue
+		}
+		rel, err := filepath.Rel(ex, abs)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }

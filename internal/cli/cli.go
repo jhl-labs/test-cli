@@ -38,6 +38,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		// scan/diagnose are accepted aliases so the GitHub Action's default
 		// `diagnose` command works unchanged.
 		return runRun(args[1:], stdout, stderr)
+	case "analyze", "inspect":
+		return runAnalyze(args[1:], stdout, stderr)
 	case "ingest":
 		return runIngest(args[1:], stdout, stderr)
 	case "report":
@@ -57,17 +59,18 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 func printHelp(w io.Writer) {
 	fmt.Fprint(w, strings.TrimLeft(`
-test-cli `+version.Short()+` — standardized test & coverage reports across languages
+test-cli `+version.Short()+` — standardized test, coverage & QA diagnostics across languages
 
 USAGE
   test-cli <command> [target] [flags]
 
 COMMANDS
   run             Detect languages, run tests with coverage, write reports
+  analyze         Statically inspect test code and ingest existing artifacts; do not run tests
   ingest          Build reports from existing artifacts (JUnit/Cobertura/LCOV/JaCoCo/go)
   report          Re-render reports from a previously generated report.json
   detect          Report which languages/toolchains are detected
-  doctor          Check that required test toolchains are installed
+  doctor          Check required runners, coverage plugins, and reporters
   generate-skill  Emit an AI-agent skill describing how to drive test-cli
   version         Print version information
   help            Show this help
@@ -78,8 +81,18 @@ COMMON FLAGS
       --lang LANG         Restrict to a language, repeatable: python,typescript,go,rust,csharp,java
       --profile NAME      Preset: default | ci | release
       --fail-under PCT     Fail if total line coverage < PCT
+      --fail-quality SCORE Fail if the standardized quality score < SCORE
+      --baseline FILE      Compare with an existing report.json
+      --fail-on-regression Fail if the baseline comparison detects regression
+      --history FILE       Add a prior report.json for trends/flaky analysis; repeatable
+      --fail-on-flaky      Fail when at least 3-run evidence identifies flaky tests
+      --diff-base REF      Analyze changed-line coverage relative to a Git ref
+      --fail-diff-coverage PCT Fail if changed executable-line coverage < PCT
       --no-run            Do not execute tests; only ingest existing artifacts
       --quiet             Suppress progress logging
+
+REPORT FLAGS
+      --source-root DIR    Trusted repository root for source heatmaps and Git diff analysis
 
 EXIT CODES
   0 success   1 test failure / coverage gate   2 usage   3 run failure   4 environment
@@ -87,7 +100,12 @@ EXIT CODES
 EXAMPLES
   test-cli run . --format stdout,json,html
   test-cli run . --lang go --fail-under 80
+  test-cli analyze . --format stdout,json,html --fail-quality 60
+  test-cli run . --baseline reports/main/report.json --fail-on-regression
+  test-cli run . --history reports/run-1.json --history reports/run-2.json --fail-on-flaky
+  test-cli run . --diff-base origin/main --fail-diff-coverage 80
   test-cli ingest --tests junit.xml --coverage coverage.xml -o reports/test
+  test-cli report --in reports/test/report.json --source-root . --format html
   test-cli generate-skill --out .claude/skills
 
 Supported languages: python, typescript, go, rust, csharp, java
