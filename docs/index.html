@@ -109,10 +109,10 @@ curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | VERSION=v0.1.1 bash<
   <section class="block" id="features">
     <h2>왜 test-cli 인가</h2>
     <div class="grid">
-      <div class="card"><h3>표준화된 스키마</h3><p>모든 언어를 <span class="kbd">test-cli/report@1</span> JSON 하나로 정규화 — 파이프라인과 AI 에이전트가 출력 하나만 읽으면 됩니다.</p></div>
-      <div class="card"><h3>커버리지 히트맵</h3><p>code-cov 수준의 HTML 대시보드와 줄 단위 hit/miss 히트맵을 자동 생성합니다.</p></div>
+      <div class="card"><h3>표준 QA 진단 스키마</h3><p>모든 언어를 <span class="kbd">test-cli/report@2</span> JSON 하나로 정규화하고, 근거·심각도·권고가 있는 품질 진단을 제공합니다.</p></div>
+      <div class="card"><h3>트리·트리맵·히트맵</h3><p>커버리지 디렉터리 트리와 파일 트리맵, 위험 매트릭스, 테스트 시간 및 줄 단위 hit/miss 히트맵을 생성합니다.</p></div>
       <div class="card"><h3>내용 기반 파싱</h3><p>JUnit·go test -json·Cobertura·LCOV·JaCoCo·Go coverprofile을 파일명이 아닌 내용으로 감지합니다.</p></div>
-      <div class="card"><h3>안정적 종료 코드</h3><p>0 통과 · 1 실패/커버리지 게이트 · 2 사용법 · 3 실행실패 · 4 환경 — CI 계약으로 고정.</p></div>
+      <div class="card"><h3>정적 분석·회귀·변경 커버리지</h3><p>정적 점검과 회귀·플래키 분석에 더해 Git diff의 변경 실행 줄만 계산하는 패치 커버리지 및 위험 파일 맵을 제공합니다.</p></div>
       <div class="card"><h3>AI 에이전트 스킬</h3><p><span class="kbd">generate-skill</span>로 에이전트가 바로 쓰는 SKILL.md를 생성합니다.</p></div>
       <div class="card"><h3>GitHub Action</h3><p><a href="https://github.com/jhl-labs/test-cli-action">test-cli-action</a>으로 설치·실행·어노테이션·Job Summary를 한 번에.</p></div>
     </div>
@@ -133,11 +133,15 @@ curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | VERSION=v0.1.1 bash<
   <section class="block" id="quickstart">
     <h2>빠른 시작</h2>
     <ol class="steps">
-      <li><code>test-cli doctor</code> — 감지된 언어의 툴체인이 준비됐는지 확인 (없으면 종료 코드 4).</li>
+      <li><code>test-cli doctor</code> — 실행 파일뿐 아니라 pytest-cov, Jest reporter, Rust coverage 플러그인, Gradle JaCoCo task 등 실제 명령의 필수 capability를 확인 (없으면 종료 코드 4).</li>
       <li><code>test-cli run . --profile ci --output-dir reports/test</code> — 테스트+커버리지 실행, 리포트 생성.</li>
       <li><code>reports/test/report.json</code> 을 읽어 결과 판단 (<span class="kbd">test.summary.failed == 0</span> 이면 통과).</li>
-      <li><code>reports/test/index.html</code> 와 <code>coverage/index.html</code> 로 대시보드·히트맵 확인.</li>
-      <li>커버리지 게이트: <code>test-cli run . --fail-under 80</code>.</li>
+      <li><code>index.html</code>, <code>insights.html</code>, <code>coverage/index.html</code> 로 진단·트리·트리맵·히트맵 확인.</li>
+      <li>선택적 게이트: <code>test-cli run . --fail-under 80 --fail-quality 70</code>.</li>
+      <li>기준 대비 회귀 게이트: <code>test-cli run . --baseline reports/main.json --fail-on-regression</code>.</li>
+      <li>3회 이상 추세·플래키 게이트: <code>test-cli run . --history reports/run-1.json --history reports/run-2.json --fail-on-flaky</code>.</li>
+      <li>변경 실행 줄 커버리지 게이트: <code>test-cli run . --diff-base origin/main --fail-diff-coverage 80</code>.</li>
+      <li>실행 없는 정적 진단: <code>test-cli analyze . --format json,html</code>.</li>
     </ol>
   </section>
 

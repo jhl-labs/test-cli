@@ -24,6 +24,11 @@ jobs:
           go-version-file: go.mod
           cache: false   # zero dependencies; no go.sum
 
+      - name: Set up Node for GitOps smoke TC
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Check formatting
         run: |
           out="$(gofmt -l .)"
@@ -40,6 +45,9 @@ jobs:
       - name: Test (race + coverage)
         run: go test -race -coverprofile=coverage.out ./...
 
+      - name: GitOps smoke TC
+        run: make test-smoke
+
       - name: Validate shell scripts
         run: bash -n scripts/build-release-artifacts.sh && bash -n scripts/install.sh
 
@@ -47,9 +55,20 @@ jobs:
         run: make build VERSION=ci-${{ github.sha }}
 
       - name: Self-check (run test-cli on its own repo)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          EVENT_BEFORE: ${{ github.event.before }}
         run: |
           ./bin/test-cli detect .
-          ./bin/test-cli run . --lang go --profile ci --output-dir reports/test
+          ./bin/test-cli doctor .
+          diff_base=HEAD
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_REF" ]; then
+            diff_base="origin/$BASE_REF"
+          elif [ -n "$EVENT_BEFORE" ] && [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            diff_base="$EVENT_BEFORE"
+          fi
+          ./bin/test-cli run . --profile ci --diff-base "$diff_base" --fail-diff-coverage 80 --output-dir reports/test
           ./bin/test-cli generate-skill --out reports/skills
 
       - name: Upload reports

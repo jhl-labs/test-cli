@@ -5,17 +5,19 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/jhl-labs/test-cli/internal/model"
 )
 
 // goTestEvent is one line of `go test -json` (test2json) output.
 type goTestEvent struct {
-	Action  string  `json:"Action"`
-	Package string  `json:"Package"`
-	Test    string  `json:"Test"`
-	Elapsed float64 `json:"Elapsed"`
-	Output  string  `json:"Output"`
+	Time    time.Time `json:"Time"`
+	Action  string    `json:"Action"`
+	Package string    `json:"Package"`
+	Test    string    `json:"Test"`
+	Elapsed float64   `json:"Elapsed"`
+	Output  string    `json:"Output"`
 }
 
 // looksLikeGoJSON reports whether data is a stream of go test -json events.
@@ -35,6 +37,7 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 	output := map[caseKey]*strings.Builder{}
 	order := map[string][]string{} // pkg -> ordered test names
 	seen := map[caseKey]bool{}
+	started := map[caseKey]time.Time{}
 	var pkgOrder []string
 	pkgSeen := map[string]bool{}
 
@@ -64,17 +67,21 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 			output[key] = &strings.Builder{}
 		}
 		switch ev.Action {
+		case "run":
+			if !ev.Time.IsZero() {
+				started[key] = ev.Time
+			}
 		case "output":
 			output[key].WriteString(ev.Output)
 		case "pass":
 			cases[key].Status = model.StatusPassed
-			cases[key].DurationMs = ev.Elapsed * 1000
+			cases[key].DurationMs = eventDurationMs(ev, started[key])
 		case "fail":
 			cases[key].Status = model.StatusFailed
-			cases[key].DurationMs = ev.Elapsed * 1000
+			cases[key].DurationMs = eventDurationMs(ev, started[key])
 		case "skip":
 			cases[key].Status = model.StatusSkipped
-			cases[key].DurationMs = ev.Elapsed * 1000
+			cases[key].DurationMs = eventDurationMs(ev, started[key])
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -97,6 +104,16 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 		suites = append(suites, suite)
 	}
 	return suites, nil
+}
+
+func eventDurationMs(event goTestEvent, started time.Time) float64 {
+	if event.Elapsed > 0 {
+		return event.Elapsed * 1000
+	}
+	if !started.IsZero() && !event.Time.IsZero() && event.Time.After(started) {
+		return float64(event.Time.Sub(started).Microseconds()) / 1000
+	}
+	return 0
 }
 
 func firstLine(s string) string {

@@ -7,12 +7,13 @@ package model
 
 import (
 	"sort"
+	"strings"
 	"time"
 )
 
 // SchemaID identifies the version of the normalized JSON schema. Consumers
 // (AI agents, dashboards) should branch on this when the shape changes.
-const SchemaID = "test-cli/report@1"
+const SchemaID = "test-cli/report@2"
 
 // Status values for an individual test case.
 const (
@@ -33,6 +34,7 @@ type Report struct {
 	Languages   []string       `json:"languages"`
 	Test        TestReport     `json:"test"`
 	Coverage    CoverageReport `json:"coverage"`
+	Quality     QualityReport  `json:"quality"`
 	Messages    []string       `json:"messages,omitempty"`
 }
 
@@ -171,6 +173,7 @@ func (r *Report) Normalize() {
 	r.Test.Summary = ts
 
 	// Coverage rollups.
+	r.Coverage.Files = mergeCoverageFiles(r.Coverage.Files)
 	var cs CoverageSummary
 	for i := range r.Coverage.Files {
 		f := &r.Coverage.Files[i]
@@ -196,4 +199,72 @@ func (r *Report) Normalize() {
 		return r.Coverage.Files[i].Path < r.Coverage.Files[j].Path
 	})
 	sort.Strings(r.Languages)
+}
+
+// mergeCoverageFiles prevents overlapping artifacts (for example multiple
+// .NET test projects or both Cobertura and LCOV) from double-counting the same
+// executable lines. Per-line hits are unioned using the maximum observed hit
+// count. Branch formats do not expose stable branch identities, so the most
+// complete branch metric is retained conservatively instead of summed.
+func mergeCoverageFiles(files []FileCoverage) []FileCoverage {
+	type accumulator struct {
+		file FileCoverage
+		hits map[int]int
+	}
+	byPath := map[string]*accumulator{}
+	var order []string
+	for _, incoming := range files {
+		path := strings.TrimPrefix(strings.ReplaceAll(incoming.Path, "\\", "/"), "./")
+		a := byPath[path]
+		if a == nil {
+			a = &accumulator{file: FileCoverage{Path: path, Language: incoming.Language}, hits: map[int]int{}}
+			byPath[path] = a
+			order = append(order, path)
+		}
+		if a.file.Language == "" {
+			a.file.Language = incoming.Language
+		}
+		if betterMetric(incoming.Lines, a.file.Lines) {
+			a.file.Lines = incoming.Lines
+		}
+		if betterMetric(incoming.Branches, a.file.Branches) {
+			a.file.Branches = incoming.Branches
+		}
+		for _, hit := range incoming.LineHits {
+			if previous, ok := a.hits[hit.Line]; !ok || hit.Hits > previous {
+				a.hits[hit.Line] = hit.Hits
+			}
+		}
+	}
+
+	out := make([]FileCoverage, 0, len(order))
+	for _, path := range order {
+		a := byPath[path]
+		if len(a.hits) > 0 {
+			lines := make([]int, 0, len(a.hits))
+			for line := range a.hits {
+				lines = append(lines, line)
+			}
+			sort.Ints(lines)
+			a.file.LineHits = make([]LineHit, 0, len(lines))
+			a.file.Lines = Metric{}
+			for _, line := range lines {
+				hits := a.hits[line]
+				a.file.LineHits = append(a.file.LineHits, LineHit{Line: line, Hits: hits})
+				if hits < 0 {
+					continue
+				}
+				a.file.Lines.Total++
+				if hits > 0 {
+					a.file.Lines.Covered++
+				}
+			}
+		}
+		out = append(out, a.file)
+	}
+	return out
+}
+
+func betterMetric(candidate, current Metric) bool {
+	return candidate.Total > current.Total || (candidate.Total == current.Total && candidate.Covered > current.Covered)
 }

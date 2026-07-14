@@ -5,9 +5,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
+	"strings"
 
+	"github.com/jhl-labs/test-cli/internal/config"
 	"github.com/jhl-labs/test-cli/internal/lang"
 )
 
@@ -20,21 +21,27 @@ func runDetect(args []string, stdout, stderr io.Writer) int {
 		return ExitUsage
 	}
 	abs, _ := filepath.Abs(root)
+	cfg, err := config.Load(abs)
+	if err != nil {
+		fmt.Fprintf(stderr, "test-cli: %v\n", err)
+		return ExitRunFailure
+	}
 
 	type entry struct {
-		Language string `json:"language"`
-		Title    string `json:"title"`
-		Detected bool   `json:"detected"`
-		Tool     string `json:"tool,omitempty"`
-		Ready    bool   `json:"ready"`
+		Language string   `json:"language"`
+		Title    string   `json:"title"`
+		Detected bool     `json:"detected"`
+		Tool     string   `json:"tool,omitempty"`
+		Ready    bool     `json:"ready"`
+		Issues   []string `json:"issues,omitempty"`
 	}
 	var entries []entry
 	for _, a := range lang.Registry {
-		e := entry{Language: a.Name, Title: a.Title, Detected: a.Present(abs)}
+		override := cfg.Commands[a.Name]
+		e := entry{Language: a.Name, Title: a.Title, Detected: a.Present(abs) || containsString(cfg.Languages, a.Name) || len(override) > 0}
 		if e.Detected {
-			if bin := firstFound(a.Doctor); bin != "" {
-				e.Tool, e.Ready = bin, true
-			}
+			state := inspectToolchain(abs, a, override)
+			e.Tool, e.Ready, e.Issues = state.Tool, state.Ready, state.Missing
 		}
 		entries = append(entries, e)
 	}
@@ -56,7 +63,7 @@ func runDetect(args []string, stdout, stderr io.Writer) int {
 			if e.Ready {
 				mark, status = "✓", "ready ("+e.Tool+")"
 			} else {
-				mark, status = "!", "detected, toolchain missing"
+				mark, status = "!", "detected, missing "+strings.Join(e.Issues, "; ")
 			}
 		}
 		fmt.Fprintf(stdout, "  %s %-22s %s\n", mark, e.Title, status)
@@ -65,13 +72,4 @@ func runDetect(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "\nNo supported languages detected.")
 	}
 	return ExitOK
-}
-
-func firstFound(bins []string) string {
-	for _, b := range bins {
-		if _, err := exec.LookPath(b); err == nil {
-			return b
-		}
-	}
-	return ""
 }

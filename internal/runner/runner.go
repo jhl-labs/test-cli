@@ -7,13 +7,16 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/jhl-labs/test-cli/internal/analysis"
 	"github.com/jhl-labs/test-cli/internal/config"
 	"github.com/jhl-labs/test-cli/internal/ingest"
 	"github.com/jhl-labs/test-cli/internal/lang"
@@ -59,28 +62,54 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 	if len(opts.IngestTests) > 0 || len(opts.IngestCoverage) > 0 {
 		ingestExplicit(report, opts, logf, langSet)
 	}
+	if !opts.NoRun {
+		// raw is entirely tool-owned. Clearing it once also removes artifacts for
+		// languages selected in a previous run but not in this one.
+		if err := os.RemoveAll(rawRoot); err != nil {
+			return nil, fmt.Errorf("clear generated raw artifacts: %w", err)
+		}
+	}
 
 	var adapters []*lang.Adapter
 	if !opts.SkipDetect {
 		adapters = selectAdapters(opts)
 	}
+	var languagesWithoutTests []string
 	for _, a := range adapters {
 		rawDir := filepath.Join(rawRoot, a.Name)
 		if err := os.MkdirAll(rawDir, 0o755); err != nil {
 			return nil, err
+		}
+		excluded := reportOutputExclusion(opts.Root, opts.OutDir)
+		var previousTests, previousCoverage map[string]artifactFingerprint
+		if !opts.NoRun {
+			// Some ecosystems (notably Maven, Gradle, and nextest) emit into the
+			// project build tree. Snapshot those fallback artifacts so a failed
+			// command cannot make an old report look like current evidence.
+			emptyRaw := filepath.Join(rawDir, ".test-cli-empty")
+			previousTests = snapshotArtifacts(lang.FindArtifacts(a.TestGlobs, emptyRaw, opts.Root, excluded))
+			previousCoverage = snapshotArtifacts(lang.FindArtifacts(a.CovGlobs, emptyRaw, opts.Root, excluded))
 		}
 
 		if !opts.NoRun {
 			runCommands(ctx, a, opts, rawDir, logf)
 		}
 
-		testFiles := lang.FindArtifacts(a.TestGlobs, rawDir, opts.Root)
-		covFiles := lang.FindArtifacts(a.CovGlobs, rawDir, opts.Root)
+		testFiles := lang.FindArtifacts(a.TestGlobs, rawDir, opts.Root, excluded)
+		covFiles := lang.FindArtifacts(a.CovGlobs, rawDir, opts.Root, excluded)
+		if !opts.NoRun {
+			testFiles = currentArtifacts(testFiles, rawDir, previousTests)
+			covFiles = currentArtifacts(covFiles, rawDir, previousCoverage)
+		}
 		if len(testFiles) == 0 && len(covFiles) == 0 {
 			logf("  %s: no artifacts found", a.Name)
+			if !opts.NoRun {
+				languagesWithoutTests = append(languagesWithoutTests, a.Name)
+			}
 			continue
 		}
 
+		casesBefore := testCaseCount(report.Test.Suites)
 		for _, tf := range testFiles {
 			suites, format, err := ingest.LoadTests(tf, a.Name)
 			if err != nil {
@@ -90,6 +119,9 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 			logf("  %s: parsed %d suite(s) from %s [%s]", a.Name, len(suites), filepath.Base(tf), format)
 			report.Test.Suites = append(report.Test.Suites, suites...)
 			langSet[a.Name] = true
+		}
+		if !opts.NoRun && testCaseCount(report.Test.Suites) == casesBefore {
+			languagesWithoutTests = append(languagesWithoutTests, a.Name)
 		}
 		for _, cf := range covFiles {
 			files, format, err := ingest.LoadCoverage(cf, a.Name)
@@ -102,12 +134,25 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 			langSet[a.Name] = true
 		}
 	}
+	if len(languagesWithoutTests) > 0 {
+		return nil, fmt.Errorf("no current test cases were produced for: %s", strings.Join(languagesWithoutTests, ", "))
+	}
 
 	for l := range langSet {
 		report.Languages = append(report.Languages, l)
 	}
 	report.Normalize()
+	analysis.Evaluate(report, opts.Root)
 	return report, nil
+}
+
+func reportOutputExclusion(root, outDir string) string {
+	r, rerr := filepath.Abs(root)
+	o, oerr := filepath.Abs(outDir)
+	if rerr != nil || oerr != nil || r == o {
+		return ""
+	}
+	return o
 }
 
 func selectAdapters(opts Options) []*lang.Adapter {
@@ -128,7 +173,7 @@ func selectAdapters(opts Options) []*lang.Adapter {
 }
 
 func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir string, logf func(string, ...any)) {
-	commands := a.Commands
+	commands := a.CommandsFor(opts.Root)
 	// Apply per-language command override from config.
 	if override, ok := opts.Config.Commands[a.Name]; ok && len(override) > 0 {
 		commands = nil
@@ -183,22 +228,199 @@ func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir stri
 }
 
 func ingestExplicit(report *model.Report, opts Options, logf func(string, ...any), langSet map[string]bool) {
-	for _, tf := range opts.IngestTests {
-		suites, format, err := ingest.LoadTests(tf, "")
+	explicitHint := ""
+	if len(opts.Languages) == 1 {
+		explicitHint = opts.Languages[0]
+	}
+	for _, tf := range uniquePaths(opts.IngestTests) {
+		hint := firstNonEmptyLanguage(explicitHint, artifactPathLanguage(tf))
+		suites, format, err := ingest.LoadTests(tf, hint)
 		if err != nil {
 			report.Messages = append(report.Messages, fmt.Sprintf("ingest %s: %v", tf, err))
 			continue
 		}
+		if format == ingest.FormatGoJSON {
+			hint = "go"
+		}
+		for i := range suites {
+			if suites[i].Language == "" {
+				suites[i].Language = firstNonEmptyLanguage(hint, lang.InferSourceLanguage(suites[i].File))
+			}
+		}
 		logf("ingest: %d suite(s) from %s [%s]", len(suites), filepath.Base(tf), format)
 		report.Test.Suites = append(report.Test.Suites, suites...)
 	}
-	for _, cf := range opts.IngestCoverage {
-		files, format, err := ingest.LoadCoverage(cf, "")
+	for _, cf := range uniquePaths(opts.IngestCoverage) {
+		hint := firstNonEmptyLanguage(explicitHint, artifactPathLanguage(cf))
+		files, format, err := ingest.LoadCoverage(cf, hint)
 		if err != nil {
 			report.Messages = append(report.Messages, fmt.Sprintf("ingest %s: %v", cf, err))
 			continue
 		}
+		switch format {
+		case ingest.FormatGoCover:
+			hint = "go"
+		case ingest.FormatJaCoCo:
+			hint = "java"
+		}
+		for i := range files {
+			if files[i].Language == "" {
+				files[i].Language = firstNonEmptyLanguage(hint, lang.InferSourceLanguage(files[i].Path))
+			}
+		}
 		logf("ingest: %d file(s) from %s [%s]", len(files), filepath.Base(cf), format)
 		report.Coverage.Files = append(report.Coverage.Files, files...)
 	}
+	reconcileExplicitLanguages(report, langSet)
+}
+
+func reconcileExplicitLanguages(report *model.Report, langSet map[string]bool) {
+	known := map[string]bool{}
+	for _, suite := range report.Test.Suites {
+		if suite.Language != "" {
+			known[suite.Language] = true
+		}
+	}
+	for _, file := range report.Coverage.Files {
+		if file.Language != "" {
+			known[file.Language] = true
+		}
+	}
+	if len(known) == 1 {
+		var only string
+		for language := range known {
+			only = language
+		}
+		for i := range report.Test.Suites {
+			if report.Test.Suites[i].Language == "" {
+				report.Test.Suites[i].Language = only
+			}
+		}
+		for i := range report.Coverage.Files {
+			if report.Coverage.Files[i].Language == "" {
+				report.Coverage.Files[i].Language = only
+			}
+		}
+	}
+	for language := range known {
+		langSet[language] = true
+	}
+}
+
+func artifactPathLanguage(path string) string {
+	aliases := map[string]string{
+		"python": "python", "py": "python",
+		"typescript": "typescript", "javascript": "typescript", "js": "typescript",
+		"go": "go", "golang": "go",
+		"rust":   "rust",
+		"csharp": "csharp", "dotnet": "csharp",
+		"java": "java", "kotlin": "java",
+	}
+	normalized := filepath.ToSlash(filepath.Clean(path))
+	for _, part := range strings.Split(normalized, "/") {
+		if language := aliases[strings.ToLower(part)]; language != "" {
+			return language
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyLanguage(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func testCaseCount(suites []model.TestSuite) int {
+	total := 0
+	for _, suite := range suites {
+		total += len(suite.Cases)
+	}
+	return total
+}
+
+func uniquePaths(paths []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		key := path
+		if abs, err := filepath.Abs(path); err == nil {
+			key = filepath.Clean(abs)
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, path)
+	}
+	return out
+}
+
+type artifactFingerprint struct {
+	Size       int64
+	ModifiedNs int64
+	SHA256     [sha256.Size]byte
+}
+
+func snapshotArtifacts(paths []string) map[string]artifactFingerprint {
+	out := make(map[string]artifactFingerprint, len(paths))
+	for _, path := range paths {
+		fingerprint, err := fingerprintArtifact(path)
+		if err != nil {
+			continue
+		}
+		out[canonicalPath(path)] = fingerprint
+	}
+	return out
+}
+
+func currentArtifacts(paths []string, rawDir string, previous map[string]artifactFingerprint) []string {
+	current := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if pathWithin(path, rawDir) {
+			current = append(current, path)
+			continue
+		}
+		before, existed := previous[canonicalPath(path)]
+		after, err := fingerprintArtifact(path)
+		if err == nil && (!existed || after != before) {
+			current = append(current, path)
+		}
+	}
+	return current
+}
+
+func fingerprintArtifact(path string) (artifactFingerprint, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return artifactFingerprint{}, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return artifactFingerprint{}, err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return artifactFingerprint{}, err
+	}
+	var sum [sha256.Size]byte
+	copy(sum[:], hash.Sum(nil))
+	return artifactFingerprint{Size: info.Size(), ModifiedNs: info.ModTime().UnixNano(), SHA256: sum}, nil
+}
+
+func canonicalPath(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	return filepath.Clean(abs)
+}
+
+func pathWithin(path, dir string) bool {
+	rel, err := filepath.Rel(canonicalPath(dir), canonicalPath(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }

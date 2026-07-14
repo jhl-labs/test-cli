@@ -17,7 +17,7 @@
     <table class="src">
       <tbody>
       {{range .Lines}}
-        <tr class="{{.Class}}">
+        <tr class="{{.Class}}" id="L{{.Number}}">
           <td class="ln">{{.Number}}</td>
           <td class="hits">{{if ge .Hits 0}}{{.Hits}}×{{end}}</td>
           <td class="code">{{.Code}}</td>

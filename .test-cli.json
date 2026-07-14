@@ -4,11 +4,24 @@
     "stdout",
     "json",
     "junit",
+    "cobertura",
     "markdown",
     "html"
   ],
-  "failUnder": 0,
+  "failUnder": 80,
+  "failQuality": 80,
   "languages": [
-    "go"
-  ]
+    "go",
+    "typescript"
+  ],
+  "commands": {
+    "typescript": [
+      [
+        "node",
+        "tests/gitops-quality/smoke-test.cjs",
+        "{out}",
+        "{root}"
+      ]
+    ]
+  }
 }

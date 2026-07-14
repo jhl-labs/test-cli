@@ -1,0 +1,197 @@
+{{define "insights.html.tmpl"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>QA Insights</title>
+{{template "styles"}}
+</head>
+<body>
+<div class="wrap">
+  <p class="crumbs"><a href="index.html">← Report</a> / QA insights</p>
+  <header class="top"><h1>QA Insights</h1><span class="score-ring g-border-{{.ScoreGrade}}"><strong>{{.Quality.Score}}</strong><small>/100 · {{.Quality.Grade}}</small></span><span class="risk-badge risk-{{.Quality.Risk}}">{{.Quality.Risk}} risk</span></header>
+  <div class="sub">test-cli {{.ToolVersion}} · generated {{.GeneratedAt}} · diagnostics are derived from this run and portable source heuristics</div>
+
+  <nav class="report-nav"><a href="index.html">Overview</a><strong>QA insights</strong>{{if .CoverageHotspots}}<a href="coverage/index.html">Coverage maps</a>{{end}}</nav>
+
+  <section>
+    <h2>Quality dimensions</h2>
+    <div class="dimensions">
+    {{range .Quality.Dimensions}}
+      <div class="dimension">
+        <div class="dimension-head"><strong>{{.Name}}</strong><span>{{.Score}}/100 · weight {{.Weight}}%</span></div>
+        <div class="bar dimension-bar"><span class="g-{{if ge .Score 90}}high{{else if ge .Score 75}}good{{else if ge .Score 50}}medium{{else}}low{{end}}" style="width:{{.Score}}%"></span></div>
+        <small>{{.Detail}}</small>
+      </div>
+    {{end}}
+    </div>
+    <div class="method-note">Weighted score: reliability 35%, line coverage 30%, branch coverage 10%, test hygiene 15%, coverage distribution 10%. Missing evidence scores zero; findings remain the primary action list.</div>
+  </section>
+
+  {{with .Quality.Comparison}}
+  <section>
+    <h2>Baseline comparison · {{if .Regressed}}<span class="risk-badge risk-high">regressed</span>{{else}}<span class="risk-badge risk-low">no material regression</span>{{end}}</h2>
+    <div class="comparison-meta">Baseline generated {{$.BaselineAt}}. Deltas are current minus baseline.</div>
+    <div class="comparison-grid">
+      <div class="comparison-card"><span>Quality score</span><strong>{{.Score.Before}} → {{.Score.After}}</strong><b class="{{if lt .Score.Delta 0}}delta-down{{else if gt .Score.Delta 0}}delta-up{{else}}delta-stable{{end}}">{{printf "%+d" .Score.Delta}}</b></div>
+      <div class="comparison-card"><span>Line coverage</span><strong>{{printf "%.1f" .LineCoveragePct.Before}}% → {{printf "%.1f" .LineCoveragePct.After}}%</strong><b class="{{if lt .LineCoveragePct.Delta 0.0}}delta-down{{else if gt .LineCoveragePct.Delta 0.0}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.1f" .LineCoveragePct.Delta}} pt</b></div>
+      <div class="comparison-card"><span>Branch coverage</span><strong>{{printf "%.1f" .BranchCoveragePct.Before}}% → {{printf "%.1f" .BranchCoveragePct.After}}%</strong><b class="{{if lt .BranchCoveragePct.Delta 0.0}}delta-down{{else if gt .BranchCoveragePct.Delta 0.0}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.1f" .BranchCoveragePct.Delta}} pt</b></div>
+      <div class="comparison-card"><span>Failures</span><strong>{{.Failures.Before}} → {{.Failures.After}}</strong><b class="{{if gt .Failures.Delta 0}}delta-down{{else if lt .Failures.Delta 0}}delta-up{{else}}delta-stable{{end}}">{{printf "%+d" .Failures.Delta}}</b></div>
+      <div class="comparison-card"><span>Tests</span><strong>{{.Tests.Before}} → {{.Tests.After}}</strong><b class="delta-stable">{{printf "%+d" .Tests.Delta}}</b></div>
+      <div class="comparison-card"><span>Reported duration</span><strong>{{printf "%.0f" .DurationMs.Before}} → {{printf "%.0f" .DurationMs.After}} ms</strong><b class="{{if gt .DurationMs.Delta 0.0}}delta-down{{else if lt .DurationMs.Delta 0.0}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.0f" .DurationMs.Delta}} ms</b></div>
+    </div>
+
+    {{if or .NewFailures .ResolvedFailures}}
+    <div class="comparison-columns">
+      <div><h3 class="subhead">New failures ({{len .NewFailures}})</h3>{{if .NewFailures}}<table><tbody>{{range .NewFailures}}<tr><td><span class="tag">{{.Language}}</span>{{.Suite}} › <strong>{{.Name}}</strong></td><td class="num"><span class="delta-down">{{if .PreviousStatus}}{{.PreviousStatus}}{{else}}new{{end}} → {{.CurrentStatus}}</span></td></tr>{{end}}</tbody></table>{{else}}<div class="empty">None</div>{{end}}</div>
+      <div><h3 class="subhead">Resolved failures ({{len .ResolvedFailures}})</h3>{{if .ResolvedFailures}}<table><tbody>{{range .ResolvedFailures}}<tr><td><span class="tag">{{.Language}}</span>{{.Suite}} › <strong>{{.Name}}</strong></td><td class="num"><span class="delta-up">{{.PreviousStatus}} → {{.CurrentStatus}}</span></td></tr>{{end}}</tbody></table>{{else}}<div class="empty">None</div>{{end}}</div>
+    </div>
+    {{end}}
+
+    {{if or $.CoverageRegressions $.CoverageImprovements}}
+    <div class="comparison-columns">
+      <div><h3 class="subhead">Coverage regressions ({{len $.CoverageRegressions}})</h3>{{if $.CoverageRegressions}}<table><tbody>{{range $.CoverageRegressions}}<tr><td><a href="coverage/{{.Slug}}">{{.Path}}</a></td><td class="num"><span class="delta-down">{{printf "%+.1f" .DeltaPct}} pt</span></td></tr>{{end}}</tbody></table>{{else}}<div class="empty">None</div>{{end}}</div>
+      <div><h3 class="subhead">Coverage improvements ({{len $.CoverageImprovements}})</h3>{{if $.CoverageImprovements}}<table><tbody>{{range $.CoverageImprovements}}<tr><td><a href="coverage/{{.Slug}}">{{.Path}}</a></td><td class="num"><span class="delta-up">{{printf "%+.1f" .DeltaPct}} pt</span></td></tr>{{end}}</tbody></table>{{else}}<div class="empty">None</div>{{end}}</div>
+    </div>
+    {{end}}
+    <div class="method-note">A baseline detects regressions and resolutions. Flakiness still requires repeated observations across multiple runs.</div>
+  </section>
+  {{end}}
+
+  {{with .Quality.Changes}}
+  <section>
+    <h2>Changed-code coverage · <code>{{.Base}}</code></h2>
+    <div class="change-summary">
+      <div class="change-score g-border-{{if ge .CoveragePct 90.0}}high{{else if ge .CoveragePct 75.0}}good{{else if ge .CoveragePct 50.0}}medium{{else}}low{{end}}"><strong>{{if gt .CoverableLines 0}}{{printf "%.1f" .CoveragePct}}%{{else}}N/A{{end}}</strong><span>patch coverage</span></div>
+      <div><b>{{.SourceFilesChanged}}</b><span>source files</span></div>
+      <div><b>{{.ChangedLines}}</b><span>changed lines</span></div>
+      <div><b>{{.CoveredLines}} / {{.CoverableLines}}</b><span>covered / executable</span></div>
+      <div><b>{{.UncoveredLines}}</b><span>uncovered executable</span></div>
+      <div><b>{{.UnmappedLines}}</b><span>non-executable / unmapped</span></div>
+    </div>
+    {{if $.ChangeFiles}}
+    <div class="change-map" aria-label="Changed source files sized by changed lines and colored by patch coverage">
+      {{range $.ChangeFiles}}<a class="change-tile {{if .CoverageReported}}g-bg-{{.Grade}}{{else if .CoverageRequired}}change-missing{{else}}change-neutral{{end}}" style="flex-grow:{{.MapWeight}}" {{if .CoverageReported}}href="coverage/{{.Slug}}{{if .FirstUncovered}}#L{{.FirstUncovered}}{{end}}"{{end}} title="{{.Path}} · {{.ChangedLines}} changed lines">
+        <strong>{{.Path}}</strong>{{if .CoverageReported}}<b>{{printf "%.1f" .CoveragePct}}%</b><small>{{.CoveredLines}}/{{.CoverableLines}} executable lines</small>{{else if .CoverageRequired}}<b>no evidence</b><small>line coverage was not reported</small>{{else}}<b>declarations</b><small>no executable function body</small>{{end}}
+      </a>{{end}}
+    </div>
+    <table><thead><tr><th>Changed source file</th><th class="num">Changed</th><th class="num">Executable</th><th class="num">Patch coverage</th><th>Uncovered changed lines</th><th class="num">Unmapped</th></tr></thead><tbody>
+      {{range $.ChangeFiles}}<tr><td><span class="tag">{{.Language}}</span>{{if .CoverageReported}}<a href="coverage/{{.Slug}}{{if .FirstUncovered}}#L{{.FirstUncovered}}{{end}}">{{.Path}}</a>{{else}}{{.Path}}{{end}}</td><td class="num">{{.ChangedLines}}</td><td class="num">{{.CoverableLines}}</td><td class="num">{{if .CoverageReported}}<span class="pill g-{{.Grade}}">{{printf "%.1f" .CoveragePct}}%</span>{{else if .CoverageRequired}}<span class="delta-down">no line data</span>{{else}}<span class="muted">not executable</span>{{end}}</td><td>{{if .UncoveredText}}<code>{{.UncoveredText}}</code>{{else}}—{{end}}</td><td class="num">{{.UnmappedLines}}</td></tr>{{end}}
+    </tbody></table>
+    {{else}}<div class="empty">No supported production source lines changed relative to this base.</div>{{end}}
+    <div class="method-note">Patch coverage intersects added/modified production lines with line-hit data. Test files, docs, deleted lines, comments, and other non-executable lines do not dilute the percentage; missing line-level evidence is reported separately.</div>
+  </section>
+  {{end}}
+
+  {{with .Quality.History}}
+  <section>
+    <h2>Run history · {{.Runs}} runs{{if .FlakyTests}} · <span class="risk-badge risk-high">{{len .FlakyTests}} flaky candidate(s)</span>{{end}}</h2>
+    <div class="trend-grid">
+      <div class="trend-card"><span>Quality score</span><strong>{{printf "%.0f" .QualityScore.First}} → {{printf "%.0f" .QualityScore.Last}}</strong><b class="{{if eq .QualityScore.Direction "decreasing"}}delta-down{{else if eq .QualityScore.Direction "increasing"}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.2f" .QualityScore.Slope}} / run · {{.QualityScore.Direction}}</b></div>
+      <div class="trend-card"><span>Line coverage</span><strong>{{printf "%.1f" .LineCoveragePct.First}}% → {{printf "%.1f" .LineCoveragePct.Last}}%</strong><b class="{{if eq .LineCoveragePct.Direction "decreasing"}}delta-down{{else if eq .LineCoveragePct.Direction "increasing"}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.2f" .LineCoveragePct.Slope}} pt / run · {{.LineCoveragePct.Direction}}</b></div>
+      <div class="trend-card"><span>Duration</span><strong>{{printf "%.0f" .TestDurationMs.First}} → {{printf "%.0f" .TestDurationMs.Last}} ms</strong><b class="{{if eq .TestDurationMs.Direction "increasing"}}delta-down{{else if eq .TestDurationMs.Direction "decreasing"}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.0f" .TestDurationMs.Slope}} ms / run · {{.TestDurationMs.Direction}}</b></div>
+      <div class="trend-card"><span>Failures</span><strong>{{printf "%.0f" .Failures.First}} → {{printf "%.0f" .Failures.Last}}</strong><b class="{{if eq .Failures.Direction "increasing"}}delta-down{{else if eq .Failures.Direction "decreasing"}}delta-up{{else}}delta-stable{{end}}">{{printf "%+.2f" .Failures.Slope}} / run · {{.Failures.Direction}}</b></div>
+    </div>
+
+    {{if $.HistorySamples}}
+    <div class="history-chart" aria-label="Quality score and line coverage across runs">
+      {{range $.HistorySamples}}
+      <div class="history-run" title="{{.Generated}} · score {{.QualityScore}} · coverage {{printf "%.1f" .LineCoveragePct}}%">
+        <div class="history-bars"><i class="history-score" style="height:{{.QualityScore}}%"></i><i class="history-coverage" style="height:{{printf "%.0f" .LineCoveragePct}}%"></i></div>
+        <small>{{.Generated}}</small>
+      </div>
+      {{end}}
+    </div>
+    <div class="history-legend"><span><i class="history-score"></i>quality score</span><span><i class="history-coverage"></i>line coverage</span></div>
+    <table><thead><tr><th>Run</th><th class="num">Score</th><th class="num">Coverage</th><th class="num">Tests</th><th class="num">Failures</th><th class="num">Duration</th></tr></thead><tbody>
+      {{range $.HistorySamples}}<tr><td>{{.Generated}}</td><td class="num">{{.QualityScore}}</td><td class="num">{{printf "%.1f" .LineCoveragePct}}%</td><td class="num">{{.Tests}}</td><td class="num">{{.Failures}}</td><td class="num">{{.Duration}}</td></tr>{{end}}
+    </tbody></table>
+    {{end}}
+
+    {{if .FlakyTests}}
+    <h3 class="subhead">Flaky candidates · repeated evidence only</h3>
+    <table><thead><tr><th>Test</th><th>Status history</th><th class="num">Observed</th><th class="num">Pass / fail</th><th class="num">Failure rate</th></tr></thead><tbody>
+      {{range .FlakyTests}}<tr><td><span class="tag">{{.Language}}</span>{{.Suite}} › <strong>{{.Name}}</strong></td><td><div class="status-history">{{range .RecentStatuses}}<span class="status-{{.}}" title="{{.}}">{{.}}</span>{{end}}</div></td><td class="num">{{.Observations}}</td><td class="num">{{.Passed}} / {{.Failed}}</td><td class="num">{{printf "%.1f" .FlakeRatePct}}%</td></tr>{{end}}
+    </tbody></table>
+    {{else}}<div class="empty">No test has both pass and fail evidence across at least three observations.</div>{{end}}
+    <div class="method-note">Trends use a least-squares slope per run. Flaky candidates require at least three observations and both passing and failing/error states; two-point changes are never labelled flaky.</div>
+  </section>
+  {{end}}
+
+  <section>
+    <h2>Actionable findings ({{len .Quality.Findings}})</h2>
+    <div class="finding-summary">
+      <span class="sev-critical">{{.Quality.Summary.Critical}} critical</span><span class="sev-high">{{.Quality.Summary.High}} high</span><span class="sev-medium">{{.Quality.Summary.Medium}} medium</span><span class="sev-low">{{.Quality.Summary.Low}} low</span><span class="sev-info">{{.Quality.Summary.Info}} info</span>
+    </div>
+    {{if .Quality.Findings}}
+      {{range .Quality.Findings}}
+      <article class="finding finding-{{.Severity}}">
+        <div><span class="severity">{{.Severity}}</span><code>{{.ID}}</code> <strong>{{.Title}}</strong><span class="category">{{.Category}}</span></div>
+        <p>{{.Detail}}</p>
+        {{if .Evidence}}<p class="evidence"><strong>Evidence:</strong> {{.Evidence}}</p>{{end}}
+        <p class="recommendation"><strong>Next:</strong> {{.Recommendation}}</p>
+      </article>
+      {{end}}
+    {{else}}<div class="empty">No actionable findings.</div>{{end}}
+  </section>
+
+  {{if .SlowTests}}
+  <section>
+    <h2>Test duration heatmap · current run</h2>
+    <div class="heat-legend"><span>faster</span><i class="heat-1"></i><i class="heat-2"></i><i class="heat-3"></i><i class="heat-4"></i><span>slower</span></div>
+    <div class="test-heatmap">
+      {{range .SlowTests}}
+      <div class="test-cell heat-{{.Heat}}" title="{{.Suite}} › {{.Name}} · {{.Duration}}">
+        <span class="tag">{{.Language}}</span><strong>{{.Name}}</strong><small>{{.Suite}}</small><b>{{.Duration}}</b>
+      </div>
+      {{end}}
+    </div>
+    <div class="method-note">This ranks duration from one run. Flakiness requires repeated-run history and is intentionally not inferred here.</div>
+  </section>
+  {{end}}
+
+  {{if .CoverageHotspots}}
+  <section>
+    <h2>Coverage risk matrix · right is better coverage, higher means more uncovered lines</h2>
+    <div class="risk-matrix">
+      <span class="axis axis-y">more uncovered lines ↑</span><span class="axis axis-x">coverage →</span>
+      <div class="risk-zone zone-review">review</div><div class="risk-zone zone-priority">priority</div>
+      {{range .RiskPoints}}<a href="coverage/{{.Slug}}" class="risk-point risk-{{.Risk}}" title="{{.Path}}" style="left:{{printf "%.1f" .Left}}%;bottom:{{printf "%.1f" .Bottom}}%;width:{{.Size}}px;height:{{.Size}}px"></a>{{end}}
+    </div>
+    <table>
+      <thead><tr><th>File</th><th>Risk</th><th class="num">Coverage</th><th class="num">Uncovered lines</th></tr></thead>
+      <tbody>{{range .CoverageHotspots}}<tr><td><a href="coverage/{{.Slug}}">{{.Path}}</a></td><td><span class="risk-badge risk-{{.Risk}}">{{.Risk}}</span></td><td class="num"><span class="pill g-{{.Grade}}">{{pct1 .CoveragePct}}</span></td><td class="num">{{.UncoveredLines}}</td></tr>{{end}}</tbody>
+    </table>
+  </section>
+  {{end}}
+
+  <section>
+    <h2>Static test-code analysis</h2>
+    {{if .HasStaticAnalysis}}
+    <div class="cards compact-cards">
+      <div class="card"><div class="k">Source files</div><div class="v">{{.Quality.Static.SourceFiles}}</div></div>
+      <div class="card"><div class="k">Test files</div><div class="v">{{.Quality.Static.TestFiles}}</div></div>
+      <div class="card"><div class="k">Source LOC</div><div class="v">{{.Quality.Static.SourceLines}}</div></div>
+      <div class="card"><div class="k">Test LOC</div><div class="v">{{.Quality.Static.TestLines}}</div></div>
+      <div class="card"><div class="k">Test/source LOC</div><div class="v">{{.StaticRatio}}</div></div>
+    </div>
+    {{if .Quality.Static.Inventory}}
+    <table><thead><tr><th>Language</th><th class="num">Source files</th><th class="num">Test files</th><th class="num">Source LOC</th><th class="num">Test LOC</th></tr></thead><tbody>
+      {{range .Quality.Static.Inventory}}<tr><td>{{.Language}}</td><td class="num">{{.SourceFiles}}</td><td class="num">{{.TestFiles}}</td><td class="num">{{.SourceLines}}</td><td class="num">{{.TestLines}}</td></tr>{{end}}
+    </tbody></table>
+    {{end}}
+    {{if .Quality.Static.Smells}}
+    <h3 class="subhead">Portable test smells ({{len .Quality.Static.Smells}})</h3>
+    <table><thead><tr><th>Rule</th><th>Location</th><th>Signal</th></tr></thead><tbody>
+      {{range .Quality.Static.Smells}}<tr><td><span class="severity sev-{{.Severity}}">{{.Rule}}</span></td><td><code>{{.Path}}:{{.Line}}</code></td><td>{{.Message}}</td></tr>{{end}}
+    </tbody></table>
+    {{else}}<div class="empty">No portable test-smell rules matched.</div>{{end}}
+    {{else}}
+    <div class="empty">No supported source files were available to scan. Artifact-only reports still include runtime and coverage diagnostics.</div>
+    {{end}}
+  </section>
+
+  <footer>Generated by <a href="https://github.com/jhl-labs/test-cli">test-cli</a> · schema {{.Schema}}</footer>
+</div>
+</body>
+</html>{{end}}

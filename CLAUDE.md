@@ -2,8 +2,8 @@
 
 `test-cli` is a single, cross-platform Go binary that runs a project's tests
 **with coverage** across six ecosystems and emits a **language-agnostic,
-standardized report** (JSON + JUnit + Cobertura + Markdown + an HTML dashboard
-and code-cov style coverage heatmap). It is designed to be driven by AI agents
+standardized report** with evidence-based QA diagnostics (JSON + JUnit +
+Cobertura + Markdown + an HTML dashboard, insights, maps, and heatmaps). It is designed to be driven by AI agents
 and to run as a GitHub Action.
 
 Supported languages: **python, typescript/javascript, go, rust, c#/.net, java**.
@@ -15,17 +15,18 @@ cmd/test-cli/         Entry point (os.Exit(cli.Run(...))).
 internal/
   version/            Build metadata, injected via -ldflags.
   model/              The normalized schema (Report/TestReport/CoverageReport). The single source of truth.
+  analysis/           Standard QA score/findings + static, baseline/history, and Git-diff coverage analysis.
   ingest/             Parsers that project native artifacts onto the model. Format is sniffed from content:
                       JUnit XML, go test -json, Cobertura, LCOV, JaCoCo, Go coverage profiles.
   lang/               Declarative per-language adapters: detection + default test command + artifact globs.
   config/             Optional .test-cli.json project config (stdlib JSON; no third-party deps).
-  runner/             Orchestration: detect → run commands → locate artifacts → ingest → Normalize().
+  runner/             Orchestration: detect → run commands → locate artifacts → ingest → Normalize() → analysis.
   report/             Renderers: json, junit (xml.go), cobertura (xml.go), markdown/stdout (text.go),
-                      html dashboard + heatmap (html.go + templates/*.tmpl, go:embed).
+                      html dashboard + QA/coverage maps and heatmaps (html.go + templates/*.tmpl, go:embed).
   cli/                Command dispatch + flag parsing (run/ingest/report/detect/doctor/generate-skill).
 ```
 
-Data flow: **native artifact → ingest (sniff + parse) → model.Report → Normalize() → report.Write(format)**.
+Data flow: **native artifact → ingest (sniff + parse) → model.Report → Normalize() → analysis.Evaluate() → report.Write(format)**.
 Every output format is derived from the same `model.Report`, so they never disagree.
 
 ## Conventions (match these when editing)
@@ -53,7 +54,7 @@ Every output format is derived from the same `model.Report`, so they never disag
 
 ```bash
 make build        # build bin/test-cli with version ldflags
-make test         # go test ./...
+make test         # Go unit tests + Node.js repository smoke TC
 make lint         # gofmt -l check + go vet
 make run-self     # build, then run test-cli against this repo
 make release-dry  # cross-compile all 6 platforms into dist/release

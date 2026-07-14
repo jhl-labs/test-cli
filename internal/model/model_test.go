@@ -52,3 +52,25 @@ func TestPassRate(t *testing.T) {
 		t.Errorf("PassRate = %v, want 1.0 (8 of 8 executed)", got)
 	}
 }
+
+func TestNormalizeMergesDuplicateCoverageWithoutDoubleCounting(t *testing.T) {
+	r := &Report{Coverage: CoverageReport{Files: []FileCoverage{
+		{Path: "./src/a.go", Language: "go", Lines: Metric{Covered: 1, Total: 2}, Branches: Metric{Covered: 1, Total: 2}, LineHits: []LineHit{{Line: 1, Hits: 1}, {Line: 2, Hits: 0}}},
+		{Path: "src/a.go", Language: "go", Lines: Metric{Covered: 1, Total: 2}, Branches: Metric{Covered: 1, Total: 2}, LineHits: []LineHit{{Line: 2, Hits: 3}, {Line: 3, Hits: 0}}},
+	}}}
+	r.Normalize()
+
+	if len(r.Coverage.Files) != 1 {
+		t.Fatalf("files = %d, want one merged file", len(r.Coverage.Files))
+	}
+	f := r.Coverage.Files[0]
+	if f.Lines.Covered != 2 || f.Lines.Total != 3 {
+		t.Errorf("merged lines = %d/%d, want 2/3", f.Lines.Covered, f.Lines.Total)
+	}
+	if f.Branches.Covered != 1 || f.Branches.Total != 2 {
+		t.Errorf("duplicate branches were summed: %d/%d", f.Branches.Covered, f.Branches.Total)
+	}
+	if r.Coverage.Summary.Lines.Total != 3 {
+		t.Errorf("summary double counted lines: %+v", r.Coverage.Summary.Lines)
+	}
+}
