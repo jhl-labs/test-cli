@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -35,11 +36,15 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 	type caseKey struct{ pkg, test string }
 	cases := map[caseKey]*model.TestCase{}
 	output := map[caseKey]*strings.Builder{}
+	terminal := map[caseKey]bool{}
 	order := map[string][]string{} // pkg -> ordered test names
 	seen := map[caseKey]bool{}
 	started := map[caseKey]time.Time{}
+	packageOutput := map[string]*strings.Builder{}
+	packageFailed := map[string]bool{}
 	var pkgOrder []string
 	pkgSeen := map[string]bool{}
+	malformed := 0
 
 	sc := bufio.NewScanner(bytes.NewReader(data))
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
@@ -50,20 +55,30 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 		}
 		var ev goTestEvent
 		if err := json.Unmarshal(line, &ev); err != nil {
+			malformed++
 			continue
 		}
-		if ev.Test == "" {
-			continue // package-level event
-		}
-		key := caseKey{ev.Package, ev.Test}
-		if !pkgSeen[ev.Package] {
+		if ev.Package != "" && !pkgSeen[ev.Package] {
 			pkgSeen[ev.Package] = true
 			pkgOrder = append(pkgOrder, ev.Package)
+			packageOutput[ev.Package] = &strings.Builder{}
 		}
+		if ev.Test == "" {
+			switch ev.Action {
+			case "output":
+				if packageOutput[ev.Package] != nil {
+					packageOutput[ev.Package].WriteString(ev.Output)
+				}
+			case "fail":
+				packageFailed[ev.Package] = true
+			}
+			continue
+		}
+		key := caseKey{ev.Package, ev.Test}
 		if !seen[key] {
 			seen[key] = true
 			order[ev.Package] = append(order[ev.Package], ev.Test)
-			cases[key] = &model.TestCase{Name: ev.Test, Classname: ev.Package, Status: model.StatusPassed}
+			cases[key] = &model.TestCase{Name: ev.Test, Classname: ev.Package, Status: model.StatusError}
 			output[key] = &strings.Builder{}
 		}
 		switch ev.Action {
@@ -76,32 +91,61 @@ func ParseGoJSON(data []byte) ([]model.TestSuite, error) {
 		case "pass":
 			cases[key].Status = model.StatusPassed
 			cases[key].DurationMs = eventDurationMs(ev, started[key])
+			terminal[key] = true
 		case "fail":
 			cases[key].Status = model.StatusFailed
 			cases[key].DurationMs = eventDurationMs(ev, started[key])
+			terminal[key] = true
 		case "skip":
 			cases[key].Status = model.StatusSkipped
 			cases[key].DurationMs = eventDurationMs(ev, started[key])
+			terminal[key] = true
 		}
 	}
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
+	if malformed > 0 {
+		return nil, fmt.Errorf("go test JSON contains %d malformed event(s)", malformed)
+	}
 
 	var suites []model.TestSuite
 	for _, pkg := range pkgOrder {
 		suite := model.TestSuite{Name: pkg, Language: "go"}
+		hasFailure := false
 		for _, test := range order[pkg] {
 			key := caseKey{pkg, test}
 			c := cases[key]
+			if !terminal[key] {
+				c.Status = model.StatusError
+				c.Message = "test did not complete"
+			}
 			if c.Status != model.StatusPassed {
 				detail := strings.TrimSpace(output[key].String())
 				c.Detail = detail
-				c.Message = firstLine(detail)
+				if c.Message == "" {
+					c.Message = firstLine(detail)
+				}
+			}
+			if c.Status == model.StatusFailed || c.Status == model.StatusError {
+				hasFailure = true
 			}
 			suite.Cases = append(suite.Cases, *c)
 		}
-		suites = append(suites, suite)
+		if packageFailed[pkg] && !hasFailure {
+			detail := strings.TrimSpace(packageOutput[pkg].String())
+			message := firstLine(detail)
+			if message == "" || message == "FAIL" {
+				message = "package test process failed"
+			}
+			suite.Cases = append(suite.Cases, model.TestCase{
+				Name: "[package]", Classname: pkg, Status: model.StatusError,
+				Message: message, Detail: detail,
+			})
+		}
+		if len(suite.Cases) > 0 {
+			suites = append(suites, suite)
+		}
 	}
 	return suites, nil
 }

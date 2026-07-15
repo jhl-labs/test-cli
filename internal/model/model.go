@@ -6,6 +6,7 @@
 package model
 
 import (
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -108,6 +109,15 @@ type Metric struct {
 
 // Recompute refreshes Pct from Covered/Total.
 func (m *Metric) Recompute() {
+	if m.Total < 0 {
+		m.Total = 0
+	}
+	if m.Covered < 0 {
+		m.Covered = 0
+	}
+	if m.Covered > m.Total {
+		m.Covered = m.Total
+	}
 	if m.Total <= 0 {
 		m.Pct = 0
 		return
@@ -145,7 +155,11 @@ func (r *Report) Normalize() {
 	for i := range r.Test.Suites {
 		s := &r.Test.Suites[i]
 		var ss TestSummary
-		for _, c := range s.Cases {
+		for j := range s.Cases {
+			c := &s.Cases[j]
+			if c.DurationMs < 0 || math.IsNaN(c.DurationMs) || math.IsInf(c.DurationMs, 0) {
+				c.DurationMs = 0
+			}
 			ss.Total++
 			ss.DurationMs += c.DurationMs
 			switch c.Status {
@@ -157,7 +171,21 @@ func (r *Report) Normalize() {
 				ss.Skipped++
 			case StatusError:
 				ss.Errors++
+			default:
+				invalid := c.Status
+				c.Status = StatusError
+				ss.Errors++
+				if c.Message == "" {
+					if invalid == "" {
+						c.Message = "test status was not reported"
+					} else {
+						c.Message = "unknown test status: " + invalid
+					}
+				}
 			}
+		}
+		if s.DurationMs < 0 || math.IsNaN(s.DurationMs) || math.IsInf(s.DurationMs, 0) {
+			s.DurationMs = 0
 		}
 		if s.DurationMs == 0 {
 			s.DurationMs = ss.DurationMs
@@ -198,6 +226,17 @@ func (r *Report) Normalize() {
 	sort.SliceStable(r.Coverage.Files, func(i, j int) bool {
 		return r.Coverage.Files[i].Path < r.Coverage.Files[j].Path
 	})
+	languageSet := make(map[string]bool, len(r.Languages))
+	languages := r.Languages[:0]
+	for _, language := range r.Languages {
+		language = strings.TrimSpace(language)
+		if language == "" || languageSet[language] {
+			continue
+		}
+		languageSet[language] = true
+		languages = append(languages, language)
+	}
+	r.Languages = languages
 	sort.Strings(r.Languages)
 }
 
@@ -214,7 +253,7 @@ func mergeCoverageFiles(files []FileCoverage) []FileCoverage {
 	byPath := map[string]*accumulator{}
 	var order []string
 	for _, incoming := range files {
-		path := strings.TrimPrefix(strings.ReplaceAll(incoming.Path, "\\", "/"), "./")
+		path := normalizeCoveragePath(incoming.Path)
 		a := byPath[path]
 		if a == nil {
 			a = &accumulator{file: FileCoverage{Path: path, Language: incoming.Language}, hits: map[int]int{}}
@@ -231,6 +270,12 @@ func mergeCoverageFiles(files []FileCoverage) []FileCoverage {
 			a.file.Branches = incoming.Branches
 		}
 		for _, hit := range incoming.LineHits {
+			if hit.Line <= 0 {
+				continue
+			}
+			if hit.Hits < -1 {
+				hit.Hits = -1
+			}
 			if previous, ok := a.hits[hit.Line]; !ok || hit.Hits > previous {
 				a.hits[hit.Line] = hit.Hits
 			}
@@ -263,6 +308,14 @@ func mergeCoverageFiles(files []FileCoverage) []FileCoverage {
 		out = append(out, a.file)
 	}
 	return out
+}
+
+func normalizeCoveragePath(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	for strings.HasPrefix(value, "./") {
+		value = strings.TrimPrefix(value, "./")
+	}
+	return value
 }
 
 func betterMetric(candidate, current Metric) bool {

@@ -52,6 +52,9 @@ func ParseCobertura(data []byte, language string) ([]model.FileCoverage, error) 
 	var order []string
 	for _, p := range root.Packages {
 		for _, c := range p.Classes {
+			if normalizePath(c.Filename) == "" {
+				continue
+			}
 			fc, ok := files[c.Filename]
 			if !ok {
 				fc = &model.FileCoverage{Path: normalizePath(c.Filename), Language: language}
@@ -59,9 +62,13 @@ func ParseCobertura(data []byte, language string) ([]model.FileCoverage, error) 
 				order = append(order, c.Filename)
 			}
 			for _, ln := range c.Lines {
-				fc.LineHits = append(fc.LineHits, model.LineHit{Line: ln.Number, Hits: ln.Hits})
+				if ln.Number <= 0 {
+					continue
+				}
+				hits := max(0, ln.Hits)
+				fc.LineHits = append(fc.LineHits, model.LineHit{Line: ln.Number, Hits: hits})
 				fc.Lines.Total++
-				if ln.Hits > 0 {
+				if hits > 0 {
 					fc.Lines.Covered++
 				}
 				if cov, tot, ok := parseConditionCoverage(ln.ConditionCoverage); ok {
@@ -91,7 +98,7 @@ func parseConditionCoverage(s string) (covered, total int, ok bool) {
 	if slash < 0 {
 		return 0, 0, false
 	}
-	covered = atoiSafe(strings.TrimSpace(frac[:slash]))
-	total = atoiSafe(strings.TrimSpace(frac[slash+1:]))
-	return covered, total, total > 0
+	covered, coveredOK := parseNonNegativeInt(frac[:slash])
+	total, totalOK := parseNonNegativeInt(frac[slash+1:])
+	return covered, total, coveredOK && totalOK && total > 0 && covered <= total
 }

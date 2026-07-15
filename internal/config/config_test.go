@@ -117,3 +117,40 @@ func TestLoadInvalidJSON(t *testing.T) {
 		t.Error("expected error for malformed JSON")
 	}
 }
+
+func TestConfigRejectsTrailingJSONAndUnreadableCandidate(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".test-cli.json")
+	if err := os.WriteFile(path, []byte(`{} {}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("trailing JSON document should be rejected")
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(dir); err == nil {
+		t.Fatal("configuration read errors must not be treated as a missing file")
+	}
+}
+
+func TestConfigTracksExplicitFormats(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".test-cli.json"), []byte(`{"formats":["json"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HasExplicitFormats() {
+		t.Fatal("explicit formats key was not retained")
+	}
+	if Default().HasExplicitFormats() {
+		t.Fatal("built-in default must remain profile-overridable")
+	}
+}

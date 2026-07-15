@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jhl-labs/test-cli/internal/analysis"
+	"github.com/jhl-labs/test-cli/internal/ingest"
 	"github.com/jhl-labs/test-cli/internal/model"
 )
 
@@ -38,6 +39,18 @@ func sampleReport() *model.Report {
 	return r
 }
 
+func TestRelPathDoesNotTreatSiblingAsChild(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "project")
+	inside := filepath.Join(root, "pkg", "file.go")
+	sibling := filepath.Join(filepath.Dir(root), "project-old", "file.go")
+	if got := relPath(root, inside); got != "pkg/file.go" {
+		t.Fatalf("inside path = %q", got)
+	}
+	if got := relPath(root, sibling); got != sibling {
+		t.Fatalf("sibling path = %q, want unchanged %q", got, sibling)
+	}
+}
+
 func TestWriteJSONAndCobertura(t *testing.T) {
 	dir := t.TempDir()
 	r := sampleReport()
@@ -54,6 +67,42 @@ func TestWriteJSONAndCobertura(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
 			t.Errorf("missing %s: %v", name, err)
 		}
+	}
+}
+
+func TestXMLReportsPreserveSourceMetadataAndBranchCoverage(t *testing.T) {
+	dir := t.TempDir()
+	r := sampleReport()
+	r.Test.Suites[0].File = "pkg/a_test.go"
+	r.Coverage.Files[0].Branches = model.Metric{Covered: 1, Total: 2}
+	r.Normalize()
+	if _, err := Write(r, FormatJUnit, dir, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	junit, err := os.ReadFile(filepath.Join(dir, "junit.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(junit), `file="pkg/a_test.go"`) {
+		t.Fatalf("JUnit suite file was not preserved:\n%s", junit)
+	}
+
+	if _, err := Write(r, FormatCobertura, dir, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	cobertura, err := os.ReadFile(filepath.Join(dir, "coverage.cobertura.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(cobertura), `timestamp="0"`) || !strings.Contains(string(cobertura), `branches-valid="2"`) {
+		t.Fatalf("Cobertura metadata missing:\n%s", cobertura)
+	}
+	files, err := ingest.ParseCobertura(cobertura, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Branches.Covered != 1 || files[0].Branches.Total != 2 {
+		t.Fatalf("Cobertura branch coverage did not round-trip: %+v", files)
 	}
 }
 
@@ -159,6 +208,13 @@ func TestReadSourceStaysWithinRepositoryRoot(t *testing.T) {
 	}
 	if lines := readSource(root, "../secret.go"); len(lines) != 0 {
 		t.Fatalf("read source outside root: %v", lines)
+	}
+	private := filepath.Join(root, ".env")
+	if err := os.WriteFile(private, []byte("TOKEN=do-not-publish\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if lines := readSource(root, ".env"); len(lines) != 0 {
+		t.Fatalf("non-source file was exposed through a coverage path: %v", lines)
 	}
 	link := filepath.Join(root, "linked.go")
 	if err := os.Symlink(secret, link); err == nil {

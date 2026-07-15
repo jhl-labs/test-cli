@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jhl-labs/test-cli/internal/config"
 	"github.com/jhl-labs/test-cli/internal/lang"
 	"github.com/jhl-labs/test-cli/internal/model"
 )
@@ -34,6 +35,67 @@ func TestParseWithTargetFlagsAfterPositional(t *testing.T) {
 	}
 	if len(langs) != 1 || langs[0] != "go" {
 		t.Errorf("langs = %v, want [go]", langs)
+	}
+}
+
+func TestParseWithTargetRejectsExtraPositionals(t *testing.T) {
+	fs := flag.NewFlagSet("t", flag.ContinueOnError)
+	fs.SetOutput(&bytes.Buffer{})
+	fs.Bool("quiet", false, "")
+	if _, err := parseWithTarget(fs, []string{"one", "--quiet", "two"}, "."); err == nil {
+		t.Fatal("extra positional argument should be rejected")
+	}
+}
+
+func TestRunRejectsInvalidSelectionsBeforeExecution(t *testing.T) {
+	for name, args := range map[string][]string{
+		"profile":  {"analyze", t.TempDir(), "--profile", "fast"},
+		"language": {"analyze", t.TempDir(), "--lang", "cobol"},
+		"format":   {"analyze", t.TempDir(), "--format", "yaml"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != ExitUsage {
+				t.Fatalf("exit = %d, want usage; stderr: %s", code, stderr.String())
+			}
+		})
+	}
+}
+
+func TestExplicitZeroThresholdOverridesProjectGate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".test-cli.json"), []byte(`{"failUnder":80}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	junit := filepath.Join(dir, "junit.xml")
+	if err := os.WriteFile(junit, []byte(`<testsuite name="s"><testcase name="ok"/></testsuite>`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"ingest", dir, "--tests", junit, "--fail-under", "0", "--format", "json", "-o", filepath.Join(dir, "out")}, &stdout, &stderr)
+	if code != ExitOK {
+		t.Fatalf("explicit zero did not disable config gate: exit=%d stderr=%s", code, stderr.String())
+	}
+}
+
+func TestReleaseProfileSuppliesFormatsButPreservesExplicitConfig(t *testing.T) {
+	defaults := config.Default()
+	applyProfile(&defaults, &commonFlags{profile: "release"})
+	if !containsString(defaults.Formats, "markdown") || containsString(defaults.Formats, "stdout") {
+		t.Fatalf("release formats = %v", defaults.Formats)
+	}
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".test-cli.json"), []byte(`{"formats":["json"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	explicit, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	applyProfile(&explicit, &commonFlags{profile: "release"})
+	if len(explicit.Formats) != 1 || explicit.Formats[0] != "json" {
+		t.Fatalf("explicit formats were overridden: %v", explicit.Formats)
 	}
 }
 
@@ -364,6 +426,19 @@ func TestGenerateSkillWritesFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "qa", "SKILL.md")); err != nil {
 		t.Errorf("SKILL.md not written: %v", err)
+	}
+}
+
+func TestGenerateSkillRejectsUnsafeMetadata(t *testing.T) {
+	for _, args := range [][]string{
+		{"generate-skill", "--out", t.TempDir(), "--name", "../escape"},
+		{"generate-skill", "--stdout", "--title", "valid\ninjected: true"},
+		{"generate-skill", "unexpected"},
+	} {
+		var stdout, stderr bytes.Buffer
+		if code := Run(args, &stdout, &stderr); code != ExitUsage {
+			t.Fatalf("args %v: exit=%d stderr=%s", args, code, stderr.String())
+		}
 	}
 }
 

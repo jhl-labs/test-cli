@@ -29,14 +29,25 @@ func ParseLCOV(data []byte, language string) ([]model.FileCoverage, error) {
 		line := strings.TrimSpace(sc.Text())
 		switch {
 		case strings.HasPrefix(line, "SF:"):
-			cur = &model.FileCoverage{Path: normalizePath(line[3:]), Language: language}
+			if cur != nil {
+				out = append(out, *cur)
+			}
+			filename := normalizePath(line[3:])
+			if filename == "" {
+				cur = nil
+				continue
+			}
+			cur = &model.FileCoverage{Path: filename, Language: language}
 		case cur == nil:
 			continue
 		case strings.HasPrefix(line, "DA:"):
 			parts := strings.Split(line[3:], ",")
 			if len(parts) >= 2 {
-				n := atoiSafe(parts[0])
-				hits := atoiSafe(parts[1])
+				n, lineOK := parseNonNegativeInt(parts[0])
+				hits, hitsOK := parseNonNegativeInt(parts[1])
+				if !lineOK || n == 0 || !hitsOK {
+					continue
+				}
 				cur.LineHits = append(cur.LineHits, model.LineHit{Line: n, Hits: hits})
 				cur.Lines.Total++
 				if hits > 0 {
@@ -46,8 +57,16 @@ func ParseLCOV(data []byte, language string) ([]model.FileCoverage, error) {
 		case strings.HasPrefix(line, "BRDA:"):
 			parts := strings.Split(line[5:], ",")
 			if len(parts) >= 4 {
+				taken := 0
+				valid := parts[3] == "-"
+				if !valid {
+					taken, valid = parseNonNegativeInt(parts[3])
+				}
+				if !valid {
+					continue
+				}
 				cur.Branches.Total++
-				if parts[3] != "-" && parts[3] != "0" {
+				if taken > 0 {
 					cur.Branches.Covered++
 				}
 			}

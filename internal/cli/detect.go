@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -20,7 +21,15 @@ func runDetect(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return ExitUsage
 	}
-	abs, _ := filepath.Abs(root)
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		fmt.Fprintf(stderr, "test-cli: %v\n", err)
+		return ExitUsage
+	}
+	if info, statErr := os.Stat(abs); statErr != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "test-cli: target is not a readable directory: %s\n", abs)
+		return ExitUsage
+	}
 	cfg, err := config.Load(abs)
 	if err != nil {
 		fmt.Fprintf(stderr, "test-cli: %v\n", err)

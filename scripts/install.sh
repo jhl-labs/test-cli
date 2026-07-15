@@ -14,6 +14,11 @@ REPO="${REPO:-jhl-labs/test-cli}"
 APP="test-cli"
 VERSION="${VERSION:-latest}"
 
+if [[ ! "${REPO}" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+  echo "invalid REPO (expected owner/name): ${REPO}" >&2
+  exit 1
+fi
+
 # --- detect platform ---
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 case "${os}" in
@@ -47,12 +52,16 @@ if [ "${VERSION}" = "latest" ]; then
   body="$(curl -fsSL "${auth[@]}" "${api}/latest" 2>/dev/null || true)"
   VERSION="$(printf '%s' "${body}" | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
   if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
-    resolved="$(curl -fsSL -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
+    resolved="$(curl -fsSL "${auth[@]}" -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null || true)"
     VERSION="${resolved##*/tag/}"
   fi
 fi
 if [ -z "${VERSION}" ] || [ "${VERSION}" = "latest" ]; then
   echo "could not resolve a release version for ${REPO}" >&2; exit 1
+fi
+if [[ ! "${VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  echo "invalid VERSION (expected semver vX.Y.Z): ${VERSION}" >&2
+  exit 1
 fi
 
 asset="${APP}_${VERSION}_${os}_${arch}${ext}"
@@ -65,18 +74,42 @@ trap 'rm -rf "${tmp}"' EXIT
 
 curl -fsSL "${auth[@]}" -o "${tmp}/${asset}" "${url}"
 
-# --- verify checksum (best effort: skip if SHA256SUMS absent) ---
-if curl -fsSL "${auth[@]}" -o "${tmp}/SHA256SUMS" "${sums_url}" 2>/dev/null; then
-  want="$(grep " ${asset}\$" "${tmp}/SHA256SUMS" | awk '{print $1}')"
-  if [ -n "${want}" ]; then
-    got="$(sha256sum "${tmp}/${asset}" | awk '{print $1}')"
-    if [ "${want}" != "${got}" ]; then
-      echo "checksum mismatch for ${asset}" >&2; exit 1
-    fi
-    echo "checksum verified"
+# --- verify checksum (required; portable across Linux and macOS) ---
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" | awk '{print $NF}'
+  else
+    echo "no SHA-256 tool found (need sha256sum, shasum, or openssl)" >&2
+    return 1
   fi
-fi
+}
 
-install -m 0755 "${tmp}/${asset}" "${INSTALL_DIR}/${APP}${ext}"
+if ! curl -fsSL "${auth[@]}" -o "${tmp}/SHA256SUMS" "${sums_url}"; then
+  echo "could not download SHA256SUMS for ${VERSION}" >&2
+  exit 1
+fi
+want="$(awk -v asset="${asset}" '$2 == asset {print $1; exit}' "${tmp}/SHA256SUMS" | tr '[:upper:]' '[:lower:]')"
+if [ -z "${want}" ]; then
+  echo "SHA256SUMS has no entry for ${asset}" >&2
+  exit 1
+fi
+if [[ ! "${want}" =~ ^[0-9a-f]{64}$ ]]; then
+  echo "SHA256SUMS contains an invalid digest for ${asset}" >&2
+  exit 1
+fi
+got="$(sha256_file "${tmp}/${asset}" | tr '[:upper:]' '[:lower:]')"
+if [ "${want}" != "${got}" ]; then
+  echo "checksum mismatch for ${asset}" >&2
+  exit 1
+fi
+echo "checksum verified"
+
+staged="${tmp}/${APP}${ext}"
+install -m 0755 "${tmp}/${asset}" "${staged}"
+"${staged}" --version
+install -m 0755 "${staged}" "${INSTALL_DIR}/${APP}${ext}"
 echo "Installed ${INSTALL_DIR}/${APP}${ext}"
-"${INSTALL_DIR}/${APP}${ext}" --version || true

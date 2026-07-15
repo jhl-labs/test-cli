@@ -74,3 +74,37 @@ func TestNormalizeMergesDuplicateCoverageWithoutDoubleCounting(t *testing.T) {
 		t.Errorf("summary double counted lines: %+v", r.Coverage.Summary.Lines)
 	}
 }
+
+func TestNormalizeRejectsInvalidPassingEvidence(t *testing.T) {
+	r := &Report{
+		Languages: []string{"go", "", "go", " python "},
+		Test: TestReport{Suites: []TestSuite{{
+			Name:  "invalid",
+			Cases: []TestCase{{Name: "missing-status", DurationMs: -1}},
+		}}},
+		Coverage: CoverageReport{Files: []FileCoverage{{
+			Path:     "././app.go",
+			Branches: Metric{Covered: 4, Total: 2},
+			LineHits: []LineHit{{Line: 0, Hits: 10}, {Line: 1, Hits: -5}, {Line: 2, Hits: 2}},
+		}}},
+	}
+
+	r.Normalize()
+
+	if r.Test.Summary.Errors != 1 || r.Test.Summary.Passing() {
+		t.Fatalf("invalid status was treated as passing: %+v", r.Test.Summary)
+	}
+	if got := r.Test.Suites[0].Cases[0]; got.Status != StatusError || got.DurationMs != 0 || got.Message == "" {
+		t.Fatalf("invalid test case was not normalized: %+v", got)
+	}
+	if len(r.Languages) != 2 || r.Languages[0] != "go" || r.Languages[1] != "python" {
+		t.Fatalf("languages = %v", r.Languages)
+	}
+	f := r.Coverage.Files[0]
+	if f.Path != "app.go" || f.Lines.Covered != 1 || f.Lines.Total != 1 {
+		t.Fatalf("line coverage was not sanitized: %+v", f)
+	}
+	if f.Branches.Covered != 2 || f.Branches.Total != 2 || f.Branches.Pct != 100 {
+		t.Fatalf("branch metric was not clamped: %+v", f.Branches)
+	}
+}

@@ -49,12 +49,18 @@ func ParseJaCoCo(data []byte, language string) ([]model.FileCoverage, error) {
 	var out []model.FileCoverage
 	for _, p := range report.Packages {
 		for _, sf := range p.SourceFiles {
+			if strings.TrimSpace(sf.Name) == "" {
+				continue
+			}
 			full := sf.Name
 			if p.Name != "" {
 				full = path.Join(p.Name, sf.Name)
 			}
 			fc := model.FileCoverage{Path: normalizePath(full), Language: language}
 			for _, ln := range sf.Lines {
+				if ln.Nr <= 0 {
+					continue
+				}
 				hits := 0
 				if ln.CI > 0 {
 					hits = 1
@@ -64,8 +70,8 @@ func ParseJaCoCo(data []byte, language string) ([]model.FileCoverage, error) {
 				if hits > 0 {
 					fc.Lines.Covered++
 				}
-				fc.Branches.Total += ln.CB + ln.MB
-				fc.Branches.Covered += ln.CB
+				fc.Branches.Total += max(0, ln.CB) + max(0, ln.MB)
+				fc.Branches.Covered += max(0, ln.CB)
 			}
 			out = append(out, fc)
 		}

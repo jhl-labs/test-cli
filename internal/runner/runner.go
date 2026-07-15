@@ -80,6 +80,9 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 		if err := os.MkdirAll(rawDir, 0o755); err != nil {
 			return nil, err
 		}
+		if err := prepareAdapterRuntime(a, rawDir); err != nil {
+			return nil, err
+		}
 		excluded := reportOutputExclusion(opts.Root, opts.OutDir)
 		var previousTests, previousCoverage map[string]artifactFingerprint
 		if !opts.NoRun {
@@ -91,8 +94,9 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 			previousCoverage = snapshotArtifacts(lang.FindArtifacts(a.CovGlobs, emptyRaw, opts.Root, excluded))
 		}
 
+		var commandFailures []string
 		if !opts.NoRun {
-			runCommands(ctx, a, opts, rawDir, logf)
+			commandFailures = runCommands(ctx, a, opts, rawDir, logf)
 		}
 
 		testFiles := lang.FindArtifacts(a.TestGlobs, rawDir, opts.Root, excluded)
@@ -110,6 +114,7 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 		}
 
 		casesBefore := testCaseCount(report.Test.Suites)
+		suitesBefore := len(report.Test.Suites)
 		for _, tf := range testFiles {
 			suites, format, err := ingest.LoadTests(tf, a.Name)
 			if err != nil {
@@ -119,6 +124,17 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 			logf("  %s: parsed %d suite(s) from %s [%s]", a.Name, len(suites), filepath.Base(tf), format)
 			report.Test.Suites = append(report.Test.Suites, suites...)
 			langSet[a.Name] = true
+		}
+		if len(commandFailures) > 0 && testCaseCount(report.Test.Suites) > casesBefore && !hasTestFailure(report.Test.Suites[suitesBefore:]) {
+			detail := strings.Join(commandFailures, "; ")
+			report.Test.Suites = append(report.Test.Suites, model.TestSuite{
+				Name: a.Name + " command", Language: a.Name,
+				Cases: []model.TestCase{{
+					Name: "[command]", Status: model.StatusError,
+					Message: "test command exited unsuccessfully", Detail: detail,
+				}},
+			})
+			report.Messages = append(report.Messages, fmt.Sprintf("%s: test command failed despite producing non-failing test artifacts (%s)", a.Name, detail))
 		}
 		if !opts.NoRun && testCaseCount(report.Test.Suites) == casesBefore {
 			languagesWithoutTests = append(languagesWithoutTests, a.Name)
@@ -146,6 +162,19 @@ func Run(ctx context.Context, opts Options) (*model.Report, error) {
 	return report, nil
 }
 
+func prepareAdapterRuntime(adapter *lang.Adapter, rawDir string) error {
+	if adapter == nil || adapter.Name != "rust" {
+		return nil
+	}
+	junitPath := filepath.Join(rawDir, "junit.xml")
+	configPath := filepath.Join(rawDir, "nextest.toml")
+	content := fmt.Sprintf("[profile.default.junit]\npath = %q\n", junitPath)
+	if err := os.WriteFile(configPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write Rust nextest tool config: %w", err)
+	}
+	return nil
+}
+
 func reportOutputExclusion(root, outDir string) string {
 	r, rerr := filepath.Abs(root)
 	o, oerr := filepath.Abs(outDir)
@@ -162,8 +191,10 @@ func selectAdapters(opts Options) []*lang.Adapter {
 	}
 	if len(filter) > 0 {
 		var out []*lang.Adapter
+		seen := map[string]bool{}
 		for _, name := range filter {
-			if a := lang.Get(name); a != nil {
+			if a := lang.Get(name); a != nil && !seen[a.Name] {
+				seen[a.Name] = true
 				out = append(out, a)
 			}
 		}
@@ -172,7 +203,7 @@ func selectAdapters(opts Options) []*lang.Adapter {
 	return lang.Detect(opts.Root)
 }
 
-func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir string, logf func(string, ...any)) {
+func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir string, logf func(string, ...any)) []string {
 	commands := a.CommandsFor(opts.Root)
 	// Apply per-language command override from config.
 	if override, ok := opts.Config.Commands[a.Name]; ok && len(override) > 0 {
@@ -182,6 +213,7 @@ func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir stri
 		}
 	}
 
+	var failures []string
 	for _, cmd := range commands {
 		args := cmd.Render(rawDir, opts.Root)
 		if len(args) == 0 {
@@ -210,6 +242,7 @@ func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir stri
 			}
 			if err != nil {
 				logf("  %s: command exited with error (%v) — continuing to ingest artifacts", a.Name, err)
+				failures = append(failures, err.Error())
 			}
 		} else {
 			out, err := c.CombinedOutput()
@@ -219,12 +252,20 @@ func runCommands(ctx context.Context, a *lang.Adapter, opts Options, rawDir stri
 			}
 			if err != nil {
 				logf("  %s: command exited with error (%v) — continuing to ingest artifacts", a.Name, err)
+				detail := strings.TrimSpace(string(trimTail(out, 500)))
+				if detail == "" {
+					detail = err.Error()
+				} else {
+					detail = err.Error() + ": " + detail
+				}
+				failures = append(failures, detail)
 			}
 		}
 		if cancel != nil {
 			cancel()
 		}
 	}
+	return failures
 }
 
 func ingestExplicit(report *model.Report, opts Options, logf func(string, ...any), langSet map[string]bool) {
@@ -340,6 +381,17 @@ func testCaseCount(suites []model.TestSuite) int {
 		total += len(suite.Cases)
 	}
 	return total
+}
+
+func hasTestFailure(suites []model.TestSuite) bool {
+	for _, suite := range suites {
+		for _, test := range suite.Cases {
+			if test.Status == model.StatusFailed || test.Status == model.StatusError {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func uniquePaths(paths []string) []string {

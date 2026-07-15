@@ -303,6 +303,11 @@ func scanProject(root string) (model.StaticAnalysis, bool) {
 	if err != nil || !info.IsDir() {
 		return out, false
 	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return out, false
+	}
+	root = resolvedRoot
 	type counts struct{ sourceFiles, testFiles, sourceLines, testLines int }
 	byLang := map[string]*counts{}
 	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -527,15 +532,6 @@ func conditionalGoSkipLines(data []byte) map[int]bool {
 		return true
 	})
 	return out
-}
-
-// stripQuotedLiterals prevents source examples and test fixture strings from
-// being reported as executable test smells. It is intentionally only a small
-// lexical pass, not a language parser.
-func stripQuotedLiterals(line string) string {
-	var quote rune
-	escaped := false
-	return stripQuotedLiteralsState(line, &quote, &escaped)
 }
 
 func stripQuotedLiteralsState(line string, quote *rune, escaped *bool) string {

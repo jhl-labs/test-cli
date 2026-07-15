@@ -13,18 +13,50 @@ VERSION_PACKAGE="${VERSION_PACKAGE:-github.com/jhl-labs/test-cli/internal/versio
 PLATFORMS="${PLATFORMS:-linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64}"
 INCLUDE_ARCHIVES="${INCLUDE_ARCHIVES:-true}"
 
+if [[ ! "${APP_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "invalid APP_NAME: ${APP_NAME}" >&2
+  exit 1
+fi
+if [[ ! "${VERSION}" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "invalid VERSION: ${VERSION}" >&2
+  exit 1
+fi
+if [ "${INCLUDE_ARCHIVES}" != "true" ] && [ "${INCLUDE_ARCHIVES}" != "false" ]; then
+  echo "INCLUDE_ARCHIVES must be true or false" >&2
+  exit 1
+fi
+if [ -z "${OUT_DIR}" ] || [ -L "${OUT_DIR}" ]; then
+  echo "OUT_DIR must be a non-symlink directory path" >&2
+  exit 1
+fi
+mkdir -p "${OUT_DIR}"
+out_abs="$(cd "${OUT_DIR}" && pwd -P)"
+work_abs="$(pwd -P)"
+home_abs="$(cd "${HOME}" && pwd -P)"
+case "${out_abs}" in
+  /|"${work_abs}"|"${home_abs}")
+    echo "refusing unsafe OUT_DIR: ${out_abs}" >&2
+    exit 1
+    ;;
+esac
+OUT_DIR="${out_abs}"
+
 LDFLAGS="-s -w"
 LDFLAGS="${LDFLAGS} -X ${VERSION_PACKAGE}.Version=${VERSION}"
 LDFLAGS="${LDFLAGS} -X ${VERSION_PACKAGE}.Commit=${COMMIT}"
 LDFLAGS="${LDFLAGS} -X ${VERSION_PACKAGE}.Date=${DATE}"
 
-rm -rf "${OUT_DIR}"
+rm -rf -- "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
 echo "Building ${APP_NAME} ${VERSION} (${COMMIT})"
 for platform in ${PLATFORMS}; do
   goos="${platform%%/*}"
   goarch="${platform##*/}"
+  case "${goos}/${goarch}" in
+    linux/amd64|linux/arm64|darwin/amd64|darwin/arm64|windows/amd64|windows/arm64) ;;
+    *) echo "unsupported release platform: ${platform}" >&2; exit 1 ;;
+  esac
   ext=""
   if [ "${goos}" = "windows" ]; then ext=".exe"; fi
 
@@ -45,7 +77,7 @@ for platform in ${PLATFORMS}; do
 done
 
 echo "Generating SHA256SUMS"
-( cd "${OUT_DIR}" && sha256sum * > SHA256SUMS )
+( cd "${OUT_DIR}" && sha256sum -- * > SHA256SUMS )
 
 echo "Artifacts written to ${OUT_DIR}:"
 ls -1 "${OUT_DIR}"

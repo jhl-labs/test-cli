@@ -9,6 +9,11 @@ import (
 	"github.com/jhl-labs/test-cli/internal/model"
 )
 
+// A coverage block cannot legitimately span more lines than the largest
+// source file test-cli will read for analysis/heatmaps. Bounding expansion
+// prevents a corrupt profile from allocating an attacker-controlled map.
+const maxExpandedCoverageLines = 2 * 1024 * 1024
+
 // looksLikeGoCover reports whether data is a Go coverage profile (the output of
 // `go test -coverprofile`). The first line is always a mode header.
 func looksLikeGoCover(data []byte) bool {
@@ -40,20 +45,27 @@ func ParseGoCover(data []byte, language string) ([]model.FileCoverage, error) {
 			continue
 		}
 		file := line[:colon]
+		if normalizePath(file) == "" {
+			continue
+		}
 		rest := strings.Fields(line[colon+1:])
 		if len(rest) != 3 {
 			continue
 		}
 		rangePart := rest[0]
-		count := atoiSafe(rest[2])
+		statements, statementsOK := parseNonNegativeInt(rest[1])
+		count, countOK := parseNonNegativeInt(rest[2])
+		if !statementsOK || statements == 0 || !countOK {
+			continue
+		}
 
 		startEnd := strings.SplitN(rangePart, ",", 2)
 		if len(startEnd) != 2 {
 			continue
 		}
-		startLine := atoiSafe(strings.SplitN(startEnd[0], ".", 2)[0])
-		endLine := atoiSafe(strings.SplitN(startEnd[1], ".", 2)[0])
-		if startLine == 0 || endLine < startLine {
+		startLine, startOK := parseNonNegativeInt(strings.SplitN(startEnd[0], ".", 2)[0])
+		endLine, endOK := parseNonNegativeInt(strings.SplitN(startEnd[1], ".", 2)[0])
+		if !startOK || !endOK || startLine == 0 || endLine < startLine || endLine-startLine >= maxExpandedCoverageLines {
 			continue
 		}
 		fm, ok := hits[file]
@@ -62,9 +74,12 @@ func ParseGoCover(data []byte, language string) ([]model.FileCoverage, error) {
 			hits[file] = fm
 			order = append(order, file)
 		}
-		for ln := startLine; ln <= endLine; ln++ {
+		for ln := startLine; ; ln++ {
 			if existing, seen := fm[ln]; !seen || count > existing {
 				fm[ln] = count
+			}
+			if ln == endLine {
+				break
 			}
 		}
 	}

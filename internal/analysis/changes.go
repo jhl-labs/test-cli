@@ -47,7 +47,7 @@ func GitChangedLines(root, base string) (map[string][]int, error) {
 	}
 	patch, err := gitOutput(root, "-c", "core.quotePath=false", "diff", "--no-color", "--no-ext-diff", "--unified=0", "--diff-filter=ACMR", "--relative", commit, "--", ".")
 	if err != nil {
-		return nil, fmt.Errorf("Git diff from %q: %w", base, err)
+		return nil, fmt.Errorf("git diff from %q: %w", base, err)
 	}
 	changed := parseGitPatch(patch)
 
@@ -70,9 +70,23 @@ func GitChangedLines(root, base string) (map[string][]int, error) {
 			changed[path] = []int{1}
 			continue
 		}
-		lineCount, readErr := fileLineCount(filepath.Join(root, filepath.FromSlash(path)))
-		if readErr != nil {
+		candidate := filepath.Join(root, filepath.FromSlash(path))
+		info, statErr := os.Lstat(candidate)
+		if statErr != nil {
+			return nil, fmt.Errorf("inspect untracked source %s: %w", path, statErr)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			// Treat the link itself as changed evidence without following it. A
+			// repository must not make analysis read an arbitrary external target.
+			changed[path] = []int{1}
 			continue
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("untracked source %s is not a regular file", path)
+		}
+		lineCount, readErr := fileLineCount(candidate)
+		if readErr != nil {
+			return nil, fmt.Errorf("read untracked source %s: %w", path, readErr)
 		}
 		lines := make([]int, lineCount)
 		for i := range lines {
@@ -314,7 +328,7 @@ func coverageExpected(root, path, language string) bool {
 	if root == "" || (language != "go" && language != "rust") {
 		return true
 	}
-	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(normalizedChangePath(path))))
+	data, err := readSourceWithinRoot(root, normalizedChangePath(path))
 	if err != nil {
 		return true
 	}
@@ -348,6 +362,34 @@ func coverageExpected(root, path, language string) bool {
 		}
 	}
 	return false
+}
+
+func readSourceWithinRoot(root, relative string) ([]byte, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	rootResolved, err := filepath.EvalSymlinks(rootAbs)
+	if err != nil {
+		return nil, err
+	}
+	candidate := filepath.Join(rootAbs, filepath.FromSlash(relative))
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return nil, err
+	}
+	rel, err := filepath.Rel(rootResolved, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("source path escapes repository root")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 2*1024*1024 {
+		return nil, fmt.Errorf("source path is not a readable project file")
+	}
+	return os.ReadFile(resolved)
 }
 
 func normalizedChangePath(path string) string {

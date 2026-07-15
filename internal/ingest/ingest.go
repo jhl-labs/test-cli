@@ -108,9 +108,9 @@ func sniffHead(data []byte) string {
 	return string(data)
 }
 
-func atoiSafe(s string) int {
-	n, _ := strconv.Atoi(strings.TrimSpace(s))
-	return n
+func parseNonNegativeInt(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	return n, err == nil && n >= 0
 }
 
 func firstNonEmpty(vals ...string) string {
@@ -125,7 +125,9 @@ func firstNonEmpty(vals ...string) string {
 // normalizePath canonicalizes a file path to forward slashes and trims common
 // prefixes so coverage paths line up with repository-relative source paths.
 func normalizePath(p string) string {
-	p = strings.ReplaceAll(p, "\\", "/")
-	p = strings.TrimPrefix(p, "./")
+	p = strings.ReplaceAll(strings.TrimSpace(p), "\\", "/")
+	for strings.HasPrefix(p, "./") {
+		p = strings.TrimPrefix(p, "./")
+	}
 	return p
 }

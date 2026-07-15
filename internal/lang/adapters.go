@@ -10,7 +10,10 @@ func python() *Adapter {
 		Name:    "python",
 		Title:   "Python",
 		Markers: []string{"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "tox.ini", "Pipfile"},
-		Globs:   []string{"*.py"},
+		// A stray helper script in a non-Python repository is not evidence that
+		// pytest should run for the whole project. Without packaging/test markers,
+		// detect Python only from conventional test module names.
+		Globs: []string{"test_*.py", "*_test.py", "tests/*.py"},
 		Commands: []Command{{
 			Args: []string{
 				"pytest",
@@ -84,15 +87,18 @@ func rust() *Adapter {
 				"cargo", "llvm-cov", "--cobertura",
 				"--output-path", "{out}/coverage.xml",
 				"nextest",
+				"--tool-config-file", "test-cli:{out}/nextest.toml",
 			},
 		}},
-		// nextest writes JUnit when configured; also accept the common location.
+		// The runner writes nextest.toml into {out}, so JUnit evidence is emitted
+		// without requiring every target repository to carry test-cli-specific
+		// nextest configuration. Repository configuration still has higher
+		// precedence than this tool config.
 		TestGlobs: []string{"junit.xml", "target/nextest/*/junit.xml"},
 		CovGlobs:  []string{"coverage.xml"},
 		Checks: []Probe{
 			{Label: "cargo-llvm-cov", Args: []string{"cargo", "llvm-cov", "--version"}},
 			{Label: "cargo-nextest", Args: []string{"cargo", "nextest", "--version"}},
-			{Label: "nextest JUnit configuration", Files: []string{".config/nextest.toml", "nextest.toml"}, Contains: "[profile.default.junit]"},
 		},
 		DocsURL: "https://nexte.st/",
 	}

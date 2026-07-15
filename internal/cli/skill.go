@@ -32,6 +32,18 @@ func runGenerateSkill(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return ExitUsage
 	}
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "test-cli generate-skill: unexpected positional argument %q\n", fs.Arg(0))
+		return ExitUsage
+	}
+	if !validSkillName(*name) {
+		fmt.Fprintln(stderr, "test-cli generate-skill: --name must be 1-64 lowercase letters, digits, or single hyphens")
+		return ExitUsage
+	}
+	if strings.TrimSpace(*title) == "" || strings.ContainsAny(*title, "\r\n") {
+		fmt.Fprintln(stderr, "test-cli generate-skill: --title must be a non-empty single line")
+		return ExitUsage
+	}
 
 	data := struct {
 		Name        string
@@ -68,4 +80,22 @@ func runGenerateSkill(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "wrote %s\n", path)
 	return ExitOK
+}
+
+func validSkillName(name string) bool {
+	if len(name) == 0 || len(name) > 64 || name[0] == '-' || name[len(name)-1] == '-' {
+		return false
+	}
+	previousHyphen := false
+	for _, r := range name {
+		isHyphen := r == '-'
+		if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && !isHyphen {
+			return false
+		}
+		if isHyphen && previousHyphen {
+			return false
+		}
+		previousHyphen = isHyphen
+	}
+	return true
 }

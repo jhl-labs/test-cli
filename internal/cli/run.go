@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/jhl-labs/test-cli/internal/analysis"
 	"github.com/jhl-labs/test-cli/internal/config"
+	"github.com/jhl-labs/test-cli/internal/lang"
 	"github.com/jhl-labs/test-cli/internal/model"
 	"github.com/jhl-labs/test-cli/internal/report"
 	"github.com/jhl-labs/test-cli/internal/runner"
@@ -100,6 +102,14 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 	if err != nil {
 		return ExitUsage
 	}
+	if !validProfile(cf.profile) {
+		fmt.Fprintf(stderr, "test-cli: unknown profile %q (expected default, ci, or release)\n", cf.profile)
+		return ExitUsage
+	}
+	if cf.timeout < 0 {
+		fmt.Fprintln(stderr, "test-cli: timeout must not be negative")
+		return ExitUsage
+	}
 	if cf.failUnder < 0 || cf.failUnder > 100 || cf.failQuality < 0 || cf.failQuality > 100 || cf.failDiffCoverage < 0 || cf.failDiffCoverage > 100 {
 		fmt.Fprintln(stderr, "test-cli: coverage and quality thresholds must be between 0 and 100")
 		return ExitUsage
@@ -109,6 +119,10 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 		fmt.Fprintf(stderr, "test-cli: %v\n", err)
 		return ExitUsage
 	}
+	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+		fmt.Fprintf(stderr, "test-cli: target is not a readable directory: %s\n", root)
+		return ExitUsage
+	}
 
 	cfg, err := config.Load(root)
 	if err != nil {
@@ -116,31 +130,60 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 		return ExitRunFailure
 	}
 	applyProfile(&cfg, &cf)
+	if err := validateCommandOverrides(cfg.Commands); err != nil {
+		fmt.Fprintf(stderr, "test-cli: config: %v\n", err)
+		return ExitUsage
+	}
+
+	selectedLanguages := []string(cf.langs)
+	languageFlag := flagProvided(fs, "lang", "language")
+	if !languageFlag {
+		selectedLanguages = cfg.Languages
+	} else if len(selectedLanguages) == 0 {
+		fmt.Fprintln(stderr, "test-cli: language must not be empty")
+		return ExitUsage
+	}
+	selectedLanguages, err = normalizeSelection(selectedLanguages, lang.Names(), "language")
+	if err != nil {
+		fmt.Fprintf(stderr, "test-cli: %v\n", err)
+		return ExitUsage
+	}
+	cfg.Languages = selectedLanguages
+
 	baselinePath := cf.baseline
-	if baselinePath == "" && cfg.Baseline != "" {
+	if !flagProvided(fs, "baseline") && cfg.Baseline != "" {
 		baselinePath = cfg.Baseline
 		if !filepath.IsAbs(baselinePath) && cfg.Path != "" {
 			baselinePath = filepath.Join(filepath.Dir(cfg.Path), baselinePath)
 		}
 	}
-	failOnRegression := cf.failOnRegression || cfg.FailOnRegression
+	failOnRegression := cf.failOnRegression
+	if !flagProvided(fs, "fail-on-regression") {
+		failOnRegression = cfg.FailOnRegression
+	}
 	if failOnRegression && baselinePath == "" {
 		fmt.Fprintln(stderr, "test-cli: --fail-on-regression requires --baseline (or config baseline)")
 		return ExitUsage
 	}
 	historyPaths := []string(cf.history)
-	if len(historyPaths) == 0 {
+	if !flagProvided(fs, "history") {
 		historyPaths = configRelativePaths(cfg.History, cfg.Path)
 	}
 	historyPaths = uniquePaths(historyPaths)
-	failOnFlaky := cf.failOnFlaky || cfg.FailOnFlaky
+	failOnFlaky := cf.failOnFlaky
+	if !flagProvided(fs, "fail-on-flaky") {
+		failOnFlaky = cfg.FailOnFlaky
+	}
 	if failOnFlaky && len(historyPaths) < 2 {
 		fmt.Fprintln(stderr, "test-cli: --fail-on-flaky requires at least two --history reports (or config history)")
 		return ExitUsage
 	}
-	diffBase := firstNonEmpty(cf.diffBase, cfg.DiffBase)
+	diffBase := cf.diffBase
+	if !flagProvided(fs, "diff-base") {
+		diffBase = cfg.DiffBase
+	}
 	failDiffCoverage := cf.failDiffCoverage
-	if failDiffCoverage == 0 {
+	if !flagProvided(fs, "fail-diff-coverage") {
 		failDiffCoverage = cfg.FailDiffCoverage
 	}
 	if failDiffCoverage > 0 && diffBase == "" {
@@ -148,11 +191,11 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 		return ExitUsage
 	}
 	failUnder := cf.failUnder
-	if failUnder == 0 {
+	if !flagProvided(fs, "fail-under") {
 		failUnder = cfg.FailUnder
 	}
 	failQuality := cf.failQuality
-	if failQuality == 0 {
+	if !flagProvided(fs, "fail-quality") {
 		failQuality = cfg.FailQuality
 	}
 	if failUnder < 0 || failUnder > 100 || failQuality < 0 || failQuality > 100 || failDiffCoverage < 0 || failDiffCoverage > 100 {
@@ -164,15 +207,31 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 	// (standard tool behavior), NOT against the target being tested. This keeps
 	// `test-cli run subdir -o reports/test` writing to ./reports/test even when
 	// the target is a subdirectory.
-	outDir := firstNonEmpty(cf.outputDir, cfg.OutputDir)
+	outDir := cfg.OutputDir
+	if flagProvided(fs, "output-dir", "o") {
+		outDir = cf.outputDir
+	}
+	outDir = strings.TrimSpace(outDir)
+	if outDir == "" {
+		fmt.Fprintln(stderr, "test-cli: output directory must not be empty")
+		return ExitUsage
+	}
 	if !filepath.IsAbs(outDir) {
 		if wd, werr := os.Getwd(); werr == nil {
 			outDir = filepath.Join(wd, outDir)
 		}
 	}
 	formats := []string(cf.formats)
-	if len(formats) == 0 {
+	if !flagProvided(fs, "format", "formats") {
 		formats = cfg.Formats
+	}
+	formats, err = normalizeSelection(formats, append([]string{report.FormatStdout}, report.AllFormats...), "format")
+	if err != nil || len(formats) == 0 {
+		if err == nil {
+			err = fmt.Errorf("at least one report format is required")
+		}
+		fmt.Fprintf(stderr, "test-cli: %v\n", err)
+		return ExitUsage
 	}
 
 	var logw io.Writer = stderr
@@ -184,7 +243,7 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 		Root:           root,
 		OutDir:         outDir,
 		ToolVersion:    version.Long(),
-		Languages:      []string(cf.langs),
+		Languages:      selectedLanguages,
 		Config:         cfg,
 		NoRun:          ingestMode || analyzeMode || cf.noRun,
 		Timeout:        cf.timeout,
@@ -326,15 +385,14 @@ func gateExitCode(rep *model.Report, failUnder float64, failQuality int, failDif
 
 // applyProfile adjusts defaults based on the chosen preset.
 func applyProfile(cfg *config.Config, cf *commonFlags) {
+	if cfg.HasExplicitFormats() {
+		return
+	}
 	switch cf.profile {
 	case "ci":
-		if len(cfg.Formats) == 0 {
-			cfg.Formats = []string{"stdout", "json", "junit", "cobertura", "html"}
-		}
+		cfg.Formats = []string{"stdout", "json", "junit", "cobertura", "html"}
 	case "release":
-		if len(cfg.Formats) == 0 {
-			cfg.Formats = []string{"json", "junit", "cobertura", "markdown", "html"}
-		}
+		cfg.Formats = []string{"json", "junit", "cobertura", "markdown", "html"}
 	}
 }
 
@@ -348,6 +406,14 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 	cf.bind(fs)
 	pos, err := parseWithTarget(fs, args, "")
 	if err != nil {
+		return ExitUsage
+	}
+	if !validProfile(cf.profile) {
+		fmt.Fprintf(stderr, "test-cli: unknown profile %q (expected default, ci, or release)\n", cf.profile)
+		return ExitUsage
+	}
+	if cf.timeout < 0 {
+		fmt.Fprintln(stderr, "test-cli: timeout must not be negative")
 		return ExitUsage
 	}
 	if cf.failUnder < 0 || cf.failUnder > 100 || cf.failQuality < 0 || cf.failQuality > 100 || cf.failDiffCoverage < 0 || cf.failDiffCoverage > 100 {
@@ -435,10 +501,32 @@ func runReport(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 
-	outDir := firstNonEmpty(cf.outputDir, filepath.Dir(source))
+	outDir := filepath.Dir(source)
+	if flagProvided(fs, "output-dir", "o") {
+		outDir = strings.TrimSpace(cf.outputDir)
+		if outDir == "" {
+			fmt.Fprintln(stderr, "test-cli: output directory must not be empty")
+			return ExitUsage
+		}
+	}
 	formats := []string(cf.formats)
-	if len(formats) == 0 {
-		formats = []string{"stdout", "html", "markdown"}
+	if !flagProvided(fs, "format", "formats") {
+		switch cf.profile {
+		case "ci":
+			formats = []string{"stdout", "json", "junit", "cobertura", "html"}
+		case "release":
+			formats = []string{"json", "junit", "cobertura", "markdown", "html"}
+		default:
+			formats = []string{"stdout", "html", "markdown"}
+		}
+	}
+	formats, err = normalizeSelection(formats, append([]string{report.FormatStdout}, report.AllFormats...), "format")
+	if err != nil || len(formats) == 0 {
+		if err == nil {
+			err = fmt.Errorf("at least one report format is required")
+		}
+		fmt.Fprintf(stderr, "test-cli: %v\n", err)
+		return ExitUsage
 	}
 	if code := renderAll(&rep, formats, outDir, sourceRoot, stdout, stderr); code != ExitOK {
 		return code
@@ -537,15 +625,69 @@ func parseWithTarget(fs *flag.FlagSet, args []string, def string) (string, error
 		if err := fs.Parse(rest[1:]); err != nil {
 			return "", err
 		}
+		if extra := fs.Args(); len(extra) > 0 {
+			return "", fmt.Errorf("unexpected positional argument %q", extra[0])
+		}
 	}
 	return target, nil
 }
 
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
+func flagProvided(fs *flag.FlagSet, names ...string) bool {
+	wanted := make(map[string]bool, len(names))
+	for _, name := range names {
+		wanted[name] = true
+	}
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if wanted[f.Name] {
+			found = true
+		}
+	})
+	return found
+}
+
+func validProfile(profile string) bool {
+	return profile == "default" || profile == "ci" || profile == "release"
+}
+
+func normalizeSelection(values, allowed []string, label string) ([]string, error) {
+	valid := make(map[string]bool, len(allowed))
+	for _, value := range allowed {
+		valid[value] = true
+	}
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("%s must not be empty", label)
+		}
+		if !valid[value] {
+			return nil, fmt.Errorf("unknown %s %q", label, value)
+		}
+		if !seen[value] {
+			seen[value] = true
+			out = append(out, value)
 		}
 	}
-	return ""
+	return out, nil
+}
+
+func validateCommandOverrides(overrides map[string][][]string) error {
+	languages := make([]string, 0, len(overrides))
+	for language := range overrides {
+		languages = append(languages, language)
+	}
+	sort.Strings(languages)
+	for _, language := range languages {
+		if lang.Get(language) == nil {
+			return fmt.Errorf("command override uses unknown language %q", language)
+		}
+		for i, argv := range overrides[language] {
+			if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+				return fmt.Errorf("command override %s[%d] has no executable", language, i)
+			}
+		}
+	}
+	return nil
 }

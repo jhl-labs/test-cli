@@ -5,9 +5,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/jhl-labs/test-cli/internal/config"
+	"github.com/jhl-labs/test-cli/internal/lang"
 )
 
 func writeFile(t *testing.T, path, content string) {
@@ -215,5 +218,51 @@ func TestTrimTail(t *testing.T) {
 	utf8Tail := trimTail([]byte("앞부분가나다"), 7)
 	if !bytes.Equal(bytes.ToValidUTF8(utf8Tail, nil), utf8Tail) || !bytes.HasSuffix(utf8Tail, []byte("나다")) {
 		t.Errorf("UTF-8 tail = %q", utf8Tail)
+	}
+}
+
+func TestSelectAdaptersDeduplicatesLanguages(t *testing.T) {
+	adapters := selectAdapters(Options{Languages: []string{"go", "go"}, Config: config.Default()})
+	if len(adapters) != 1 || adapters[0].Name != "go" {
+		t.Fatalf("adapters = %v", adapters)
+	}
+}
+
+func TestPrepareAdapterRuntimeWritesNextestJUnitConfig(t *testing.T) {
+	raw := t.TempDir()
+	if err := prepareAdapterRuntime(lang.Get("rust"), raw); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(raw, "nextest.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	if !strings.Contains(text, "[profile.default.junit]") || !strings.Contains(text, filepath.Join(raw, "junit.xml")) {
+		t.Fatalf("nextest config = %q", text)
+	}
+}
+
+func TestRunSurfacesCommandFailureWhenArtifactsLookPassing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test helper uses a POSIX shell script")
+	}
+	root := t.TempDir()
+	out := filepath.Join(root, "reports")
+	script := filepath.Join(root, "failing-test-command")
+	writeFile(t, script, "#!/bin/sh\nprintf '%s\\n' '<testsuite name=\"s\"><testcase name=\"ok\"/></testsuite>' > \"$1/junit.xml\"\nexit 7\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Commands = map[string][][]string{"python": {{script, "{out}"}}}
+	rep, err := Run(context.Background(), Options{
+		Root: root, OutDir: out, Languages: []string{"python"}, Config: cfg,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Test.Summary.Errors != 1 || rep.Test.Summary.Passing() {
+		t.Fatalf("command failure was hidden by passing artifact: %+v", rep.Test.Summary)
 	}
 }

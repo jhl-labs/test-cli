@@ -2,6 +2,7 @@ package report
 
 import (
 	"encoding/xml"
+	"fmt"
 
 	"github.com/jhl-labs/test-cli/internal/model"
 )
@@ -27,6 +28,7 @@ type xmlSuite struct {
 	Skipped  int       `xml:"skipped,attr"`
 	Time     float64   `xml:"time,attr"`
 	Lang     string    `xml:"language,attr,omitempty"`
+	File     string    `xml:"file,attr,omitempty"`
 	Cases    []xmlCase `xml:"testcase"`
 }
 
@@ -66,6 +68,7 @@ func writeJUnit(r *model.Report, path string) error {
 			Skipped:  s.Summary.Skipped,
 			Time:     s.DurationMs / 1000,
 			Lang:     s.Language,
+			File:     s.File,
 		}
 		for _, c := range s.Cases {
 			xc := xmlCase{Name: c.Name, Classname: c.Classname, Time: c.DurationMs / 1000}
@@ -91,15 +94,17 @@ func writeJUnit(r *model.Report, path string) error {
 // --- Cobertura emission (standardized, aggregated coverage) ---
 
 type xmlCoverage struct {
-	XMLName      xml.Name    `xml:"coverage"`
-	LineRate     float64     `xml:"line-rate,attr"`
-	BranchRate   float64     `xml:"branch-rate,attr"`
-	LinesCovered int         `xml:"lines-covered,attr"`
-	LinesValid   int         `xml:"lines-valid,attr"`
-	Version      string      `xml:"version,attr"`
-	Timestamp    int64       `xml:"timestamp,attr"`
-	Sources      []string    `xml:"sources>source"`
-	Packages     []xmlCovPkg `xml:"packages>package"`
+	XMLName         xml.Name    `xml:"coverage"`
+	LineRate        float64     `xml:"line-rate,attr"`
+	BranchRate      float64     `xml:"branch-rate,attr"`
+	LinesCovered    int         `xml:"lines-covered,attr"`
+	LinesValid      int         `xml:"lines-valid,attr"`
+	BranchesCovered int         `xml:"branches-covered,attr"`
+	BranchesValid   int         `xml:"branches-valid,attr"`
+	Version         string      `xml:"version,attr"`
+	Timestamp       int64       `xml:"timestamp,attr"`
+	Sources         []string    `xml:"sources>source"`
+	Packages        []xmlCovPkg `xml:"packages>package"`
 }
 
 type xmlCovPkg struct {
@@ -118,18 +123,25 @@ type xmlCovClass struct {
 }
 
 type xmlCovLine struct {
-	Number int `xml:"number,attr"`
-	Hits   int `xml:"hits,attr"`
+	Number            int    `xml:"number,attr"`
+	Hits              int    `xml:"hits,attr"`
+	Branch            bool   `xml:"branch,attr,omitempty"`
+	ConditionCoverage string `xml:"condition-coverage,attr,omitempty"`
 }
 
 func writeCobertura(r *model.Report, path string) error {
 	doc := xmlCoverage{
-		LineRate:     r.Coverage.Summary.Lines.Pct / 100,
-		BranchRate:   r.Coverage.Summary.Branches.Pct / 100,
-		LinesCovered: r.Coverage.Summary.Lines.Covered,
-		LinesValid:   r.Coverage.Summary.Lines.Total,
-		Version:      "test-cli",
-		Sources:      []string{r.Root},
+		LineRate:        r.Coverage.Summary.Lines.Pct / 100,
+		BranchRate:      r.Coverage.Summary.Branches.Pct / 100,
+		LinesCovered:    r.Coverage.Summary.Lines.Covered,
+		LinesValid:      r.Coverage.Summary.Lines.Total,
+		BranchesCovered: r.Coverage.Summary.Branches.Covered,
+		BranchesValid:   r.Coverage.Summary.Branches.Total,
+		Version:         "test-cli",
+		Sources:         []string{r.Root},
+	}
+	if !r.GeneratedAt.IsZero() {
+		doc.Timestamp = r.GeneratedAt.Unix()
 	}
 	pkg := xmlCovPkg{
 		Name:       "all",
@@ -143,11 +155,18 @@ func writeCobertura(r *model.Report, path string) error {
 			LineRate:   f.Lines.Pct / 100,
 			BranchRate: f.Branches.Pct / 100,
 		}
+		branchAssigned := false
 		for _, lh := range f.LineHits {
 			if lh.Hits < 0 {
 				continue
 			}
-			cls.Lines = append(cls.Lines, xmlCovLine{Number: lh.Line, Hits: lh.Hits})
+			line := xmlCovLine{Number: lh.Line, Hits: lh.Hits}
+			if !branchAssigned && f.Branches.Total > 0 {
+				line.Branch = true
+				line.ConditionCoverage = fmt.Sprintf("%.1f%% (%d/%d)", f.Branches.Pct, f.Branches.Covered, f.Branches.Total)
+				branchAssigned = true
+			}
+			cls.Lines = append(cls.Lines, line)
 		}
 		pkg.Classes = append(pkg.Classes, cls)
 	}

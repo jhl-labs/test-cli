@@ -61,6 +61,18 @@ func TestPresentFalseOnEmptyDir(t *testing.T) {
 	}
 }
 
+func TestPythonDetectionIgnoresIncidentalScripts(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "scripts", "plot_results.py"), "print('helper')")
+	if Get("python").Present(dir) {
+		t.Fatal("incidental Python helper script should not select the pytest adapter")
+	}
+	write(t, filepath.Join(dir, "tests", "test_app.py"), "def test_ok(): pass")
+	if !Get("python").Present(dir) {
+		t.Fatal("conventional Python test module should select the pytest adapter")
+	}
+}
+
 func TestCommandRenderPlaceholders(t *testing.T) {
 	c := Command{Args: []string{"go", "test", "-coverprofile={out}/c.out", "{root}/..."}}
 	got := c.Render("/tmp/raw", "/proj")
@@ -174,7 +186,7 @@ func TestTypeScriptUsesInstalledDependenciesOnly(t *testing.T) {
 
 func TestRustAndCSharpCheckReportConfiguration(t *testing.T) {
 	rustChecks := Get("rust").CapabilityProbes(t.TempDir())
-	if len(rustChecks) != 3 || len(rustChecks[2].Files) == 0 || rustChecks[2].Contains != "[profile.default.junit]" {
+	if len(rustChecks) != 2 {
 		t.Fatalf("Rust capability probes = %+v", rustChecks)
 	}
 	csharpChecks := Get("csharp").CapabilityProbes(t.TempDir())
@@ -217,6 +229,25 @@ func TestFindArtifactsPlainAndRecursive(t *testing.T) {
 	}
 }
 
+func TestFindArtifactsRecursiveGlobHonorsIntermediateDirectories(t *testing.T) {
+	out := t.TempDir()
+	root := t.TempDir()
+	want := filepath.Join(root, "module", "target", "surefire-reports", "TEST-app.xml")
+	write(t, want, "<testsuite/>")
+	write(t, filepath.Join(root, "module", "other", "TEST-unrelated.xml"), "<testsuite/>")
+
+	got := FindArtifacts([]string{"**/surefire-reports/TEST-*.xml"}, out, root)
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("recursive artifacts = %v, want %s", got, want)
+	}
+	if !doublestarMatch("target/**/jacoco.xml", "target/site/jacoco/jacoco.xml") {
+		t.Fatal("doublestar should consume multiple path segments")
+	}
+	if doublestarMatch("**/surefire-reports/TEST-*.xml", "other/TEST-unrelated.xml") {
+		t.Fatal("recursive match ignored required intermediate directory")
+	}
+}
+
 func TestFindArtifactsPrefersFreshOutputAndExcludesReports(t *testing.T) {
 	out := t.TempDir()
 	root := t.TempDir()
@@ -238,6 +269,27 @@ func TestFindArtifactsPrefersFreshOutputAndExcludesReports(t *testing.T) {
 	write(t, filepath.Join(root, "node_modules", "pkg", "coverage.cobertura.xml"), "dependency")
 	if got := FindArtifacts([]string{"**/coverage.cobertura.xml"}, emptyOut, root, reports); len(got) != 0 {
 		t.Fatalf("rendered reports were re-ingested: %v", got)
+	}
+}
+
+func TestFindArtifactsDoesNotFollowSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outsideDir := t.TempDir()
+	outside := filepath.Join(outsideDir, "coverage.cobertura.xml")
+	write(t, outside, "<coverage/>")
+	link := filepath.Join(root, "coverage.cobertura.xml")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if got := FindArtifacts([]string{"coverage.cobertura.xml"}, filepath.Join(root, "missing"), root); len(got) != 0 {
+		t.Fatalf("artifact discovery followed symlink: %v", got)
+	}
+	linkedDir := filepath.Join(root, "linked")
+	if err := os.Symlink(outsideDir, linkedDir); err != nil {
+		t.Skipf("directory symlink unavailable: %v", err)
+	}
+	if got := FindArtifacts([]string{"linked/*.xml"}, filepath.Join(root, "missing"), root); len(got) != 0 {
+		t.Fatalf("artifact discovery traversed symlink directory: %v", got)
 	}
 }
 

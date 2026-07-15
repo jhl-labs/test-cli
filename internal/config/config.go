@@ -6,7 +6,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -48,6 +47,8 @@ type Config struct {
 	Commands map[string][][]string `json:"commands"`
 	// Path is the file this config was loaded from (empty if defaults).
 	Path string `json:"-"`
+
+	formatsExplicit bool
 }
 
 // Default returns the built-in configuration used when no file is present.
@@ -73,7 +74,8 @@ func Load(dir string) (Config, error) {
 	for {
 		for _, name := range candidateNames {
 			p := filepath.Join(abs, name)
-			if data, err := os.ReadFile(p); err == nil {
+			data, readErr := os.ReadFile(p)
+			if readErr == nil {
 				loaded, err := parse(data)
 				if err != nil {
 					return cfg, fmt.Errorf("parse %s: %w", p, err)
@@ -81,6 +83,9 @@ func Load(dir string) (Config, error) {
 				merge(&cfg, loaded)
 				cfg.Path = p
 				return cfg, nil
+			}
+			if !errors.Is(readErr, os.ErrNotExist) {
+				return cfg, fmt.Errorf("read %s: %w", p, readErr)
 			}
 		}
 		parent := filepath.Dir(abs)
@@ -93,18 +98,20 @@ func Load(dir string) (Config, error) {
 
 func parse(data []byte) (Config, error) {
 	var c Config
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&c); err != nil {
-		// Retry leniently (unknown fields are tolerated for forward-compat).
-		var c2 Config
-		if err2 := json.Unmarshal(data, &c2); err2 != nil {
-			return Config{}, errors.Join(err, err2)
-		}
-		return c2, nil
+	if err := json.Unmarshal(data, &c); err != nil {
+		return Config{}, err
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return Config{}, err
+	}
+	_, c.formatsExplicit = fields["formats"]
 	return c, nil
 }
+
+// HasExplicitFormats reports whether the loaded file contained a formats key.
+// CLI profiles use this to avoid replacing a project's deliberate selection.
+func (c Config) HasExplicitFormats() bool { return c.formatsExplicit }
 
 func merge(base *Config, override Config) {
 	if override.OutputDir != "" {
@@ -113,6 +120,7 @@ func merge(base *Config, override Config) {
 	if len(override.Formats) > 0 {
 		base.Formats = override.Formats
 	}
+	base.formatsExplicit = override.formatsExplicit
 	if len(override.Languages) > 0 {
 		base.Languages = override.Languages
 	}

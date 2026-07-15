@@ -68,14 +68,14 @@ run and a Go `go test` run produce structurally identical reports.
 | Python | `pytest --junitxml … --cov … --cov-report=xml` | JUnit XML | Cobertura |
 | TypeScript/JS | project-local `node_modules/jest/bin/jest.js --reporters=jest-junit --coverage` | JUnit XML | Cobertura / LCOV |
 | Go | `go test ./... -json -coverprofile` | `go test -json` | Go coverage profile |
-| Rust | `cargo llvm-cov --cobertura nextest` | JUnit XML | Cobertura |
+| Rust | `cargo llvm-cov --cobertura nextest` with a generated nextest tool config | JUnit XML | Cobertura |
 | C#/.NET | `dotnet test --logger junit --collect "XPlat Code Coverage"` | JUnit XML | Cobertura |
 | Java/Kotlin | Maven `jacoco:prepare-agent test jacoco:report` or Gradle `test jacocoTestReport` | Surefire/Gradle JUnit XML | JaCoCo XML |
 
 Every default command is overridable per project (see [Configuration](#configuration)).
 `doctor` validates the capabilities used by those commands, not just the parent
 runtime: for example pytest-cov, local Jest + jest-junit, cargo-llvm-cov +
-cargo-nextest + JUnit configuration, .NET's JUnit logger + Coverlet collector,
+cargo-nextest, .NET's JUnit logger + Coverlet collector,
 and Gradle's `jacocoTestReport` task. Java projects select Maven,
 the Gradle wrapper, or installed Gradle from their project markers. The default
 JavaScript command never downloads packages during a test run.
@@ -100,7 +100,7 @@ curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | sudo bash
 
 # Pin a version into a directory:
 curl -fsSL https://jhl-labs.github.io/test-cli/install.sh \
-  | VERSION=v0.1.1 INSTALL_DIR="$HOME/.local/bin" bash
+  | VERSION=v0.3.0 INSTALL_DIR="$HOME/.local/bin" bash
 
 # From source:
 go install github.com/jhl-labs/test-cli/cmd/test-cli@latest
@@ -449,7 +449,6 @@ internal/
   cli/                 Command dispatch & flags + the generate-skill template.
 scripts/               Cross-platform release build + install script.
 .github/workflows/     ci.yml (lint/test/build/self-check) · release.yml (tag-driven).
-action.yaml            Composite GitHub Action.
 ```
 
 See [`CLAUDE.md`](CLAUDE.md) for engineering conventions.

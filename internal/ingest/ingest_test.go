@@ -216,6 +216,31 @@ func TestParseGoJSONRecoversSubSecondDurationFromEventTimes(t *testing.T) {
 	}
 }
 
+func TestParseGoJSONDoesNotTreatIncompleteOrPackageFailureAsPassing(t *testing.T) {
+	data := []byte(`{"Action":"run","Package":"p","Test":"TestIncomplete"}
+{"Action":"output","Package":"broken","Output":"build failed\n"}
+{"Action":"fail","Package":"broken","Elapsed":0.01}`)
+	suites, err := ParseGoJSON(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(suites) != 2 {
+		t.Fatalf("suites = %+v", suites)
+	}
+	for _, suite := range suites {
+		if len(suite.Cases) != 1 || suite.Cases[0].Status != model.StatusError {
+			t.Fatalf("non-terminal Go failure was treated as passing: %+v", suite)
+		}
+	}
+}
+
+func TestParseGoJSONRejectsCorruptEventStream(t *testing.T) {
+	_, err := ParseGoJSON([]byte("{\"Action\":\"run\",\"Package\":\"p\",\"Test\":\"T\"}\n{bad json}"))
+	if err == nil {
+		t.Fatal("corrupt go test JSON should fail ingestion")
+	}
+}
+
 func TestParseCobertura(t *testing.T) {
 	data := []byte(`<?xml version="1.0"?>
 <coverage>
@@ -332,6 +357,17 @@ github.com/x/y/a.go:14.2,15.10 1 0
 	}
 }
 
+func TestParseGoCoverBoundsCorruptBlockExpansion(t *testing.T) {
+	data := []byte("mode: set\napp.go:1.1,999999999.1 1 1\napp.go:7.1,7.2 1 1\n")
+	files, err := ParseGoCover(data, "go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Lines.Total != 1 || files[0].LineHits[0].Line != 7 {
+		t.Fatalf("corrupt coverage range was expanded: %+v", files)
+	}
+}
+
 func TestParseJaCoCo(t *testing.T) {
 	data := []byte(`<?xml version="1.0"?>
 <!DOCTYPE report PUBLIC "-//JACOCO//DTD Report 1.1//EN" "report.dtd">
@@ -362,5 +398,25 @@ func TestParseJaCoCo(t *testing.T) {
 	}
 	if f.Branches.Covered != 2 || f.Branches.Total != 4 {
 		t.Errorf("branches = %d/%d", f.Branches.Covered, f.Branches.Total)
+	}
+}
+
+func TestCoverageParsersIgnoreMalformedLineEvidence(t *testing.T) {
+	lcov := []byte("SF:src/app.ts\nDA:not-a-line,1\nDA:0,1\nDA:2,nope\nDA:3,1\nBRDA:3,0,0,nope\nBRDA:3,0,1,-\nend_of_record\n")
+	files, err := ParseLCOV(lcov, "typescript")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Lines.Total != 1 || files[0].Lines.Covered != 1 || files[0].Branches.Total != 1 {
+		t.Fatalf("malformed LCOV entries affected metrics: %+v", files)
+	}
+
+	cobertura := []byte(`<coverage><packages><package><classes><class filename=""><lines><line number="1" hits="1"/></lines></class><class filename="app.py"><lines><line number="0" hits="1"/><line number="2" hits="-1"/><line number="3" hits="1" condition-coverage="bad (x/2)"/></lines></class></classes></package></packages></coverage>`)
+	files, err = ParseCobertura(cobertura, "python")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 || files[0].Lines.Total != 2 || files[0].Lines.Covered != 1 || files[0].Branches.Total != 0 {
+		t.Fatalf("malformed Cobertura entries affected metrics: %+v", files)
 	}
 }

@@ -315,7 +315,10 @@ func FindArtifacts(globs []string, out, root string, excluded ...string) []strin
 func findArtifactsIn(globs []string, base string, excluded ...string) []string {
 	set := map[string]struct{}{}
 	add := func(m string) {
-		if fi, err := os.Stat(m); err == nil && !fi.IsDir() && !pathExcluded(m, excluded) {
+		// Artifact discovery must not follow repository-controlled symlinks to
+		// files outside the analyzed project. Explicit --tests/--coverage paths
+		// remain available when a caller intentionally trusts such a path.
+		if fi, err := os.Lstat(m); err == nil && fi.Mode().IsRegular() && pathResolvedWithin(m, base) && !pathExcluded(m, excluded) {
 			set[m] = struct{}{}
 		}
 	}
@@ -340,13 +343,10 @@ func findArtifactsIn(globs []string, base string, excluded ...string) []string {
 }
 
 // recursiveGlob matches a "**"-containing pattern by walking base and testing
-// each file's base-relative path against the simplified pattern.
+// each file's full base-relative path. A doublestar consumes zero or more path
+// segments; ordinary segments retain filepath.Match semantics.
 func recursiveGlob(base, pattern string, excluded ...string) []string {
-	// Reduce "a/**/b.xml" to a final-segment match on "b.xml".
-	last := pattern
-	if i := strings.LastIndex(pattern, "**/"); i >= 0 {
-		last = pattern[i+3:]
-	}
+	pattern = strings.TrimPrefix(filepath.ToSlash(pattern), "./")
 	var matches []string
 	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
@@ -361,12 +361,40 @@ func recursiveGlob(base, pattern string, excluded ...string) []string {
 			}
 			return nil
 		}
-		if ok, _ := filepath.Match(last, d.Name()); ok {
+		rel, relErr := filepath.Rel(base, path)
+		if relErr == nil && doublestarMatch(pattern, filepath.ToSlash(rel)) {
 			matches = append(matches, path)
 		}
 		return nil
 	})
 	return matches
+}
+
+func doublestarMatch(pattern, value string) bool {
+	patterns := strings.Split(strings.Trim(pattern, "/"), "/")
+	values := strings.Split(strings.Trim(value, "/"), "/")
+	type state struct{ pattern, value int }
+	seen := map[state]bool{}
+	var match func(int, int) bool
+	match = func(pi, vi int) bool {
+		if pi == len(patterns) {
+			return vi == len(values)
+		}
+		key := state{pi, vi}
+		if seen[key] {
+			return false
+		}
+		seen[key] = true
+		if patterns[pi] == "**" {
+			return match(pi+1, vi) || (vi < len(values) && match(pi, vi+1))
+		}
+		if vi >= len(values) {
+			return false
+		}
+		matched, err := filepath.Match(patterns[pi], values[vi])
+		return err == nil && matched && match(pi+1, vi+1)
+	}
+	return match(0, 0)
 }
 
 func artifactIgnoredDir(name string) bool {
@@ -379,7 +407,7 @@ func artifactIgnoredDir(name string) bool {
 }
 
 func pathExcluded(path string, excluded []string) bool {
-	abs, err := filepath.Abs(path)
+	abs, err := resolvedPath(path)
 	if err != nil {
 		return false
 	}
@@ -387,7 +415,7 @@ func pathExcluded(path string, excluded []string) bool {
 		if dir == "" {
 			continue
 		}
-		ex, err := filepath.Abs(dir)
+		ex, err := resolvedPath(dir)
 		if err != nil {
 			continue
 		}
@@ -397,4 +425,25 @@ func pathExcluded(path string, excluded []string) bool {
 		}
 	}
 	return false
+}
+
+func pathResolvedWithin(path, base string) bool {
+	resolvedBase, err := resolvedPath(base)
+	if err != nil {
+		return false
+	}
+	resolvedCandidate, err := resolvedPath(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(resolvedBase, resolvedCandidate)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+func resolvedPath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(abs)
 }

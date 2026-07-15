@@ -22,6 +22,8 @@ var tmpl = template.Must(template.New("").Funcs(template.FuncMap{
 	"add":  func(a, b int) int { return a + b },
 }).ParseFS(templatesFS, "templates/*.tmpl"))
 
+const maxSourceFileBytes = 2 * 1024 * 1024
+
 // writeHTML renders the full HTML site: overview and QA insights pages plus
 // coverage maps and code-cov style source heatmaps. Returns every file written.
 func writeHTML(r *model.Report, outDir, root string) ([]string, error) {
@@ -84,8 +86,12 @@ func renderTemplate(name, path string, data any) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return tmpl.ExecuteTemplate(f, name, data)
+	if err := tmpl.ExecuteTemplate(f, name, data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	return f.Close()
 }
 
 // --- view models ---
@@ -570,7 +576,7 @@ func readSource(root, path string) []string {
 	// "github.com/org/repo/internal/x.go") and other prefixed paths against the
 	// repository-relative source file ("internal/x.go") without allowing an
 	// artifact path or symlink to read files outside the analyzed repository.
-	if strings.TrimSpace(root) == "" {
+	if strings.TrimSpace(root) == "" || !supportedSourcePath(path) {
 		return nil
 	}
 	rootAbs, err := filepath.Abs(root)
@@ -592,11 +598,24 @@ func readSource(root, path string) []string {
 		if err != nil || !pathWithinRoot(rootResolved, resolved) {
 			continue
 		}
+		info, err := os.Stat(resolved)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > maxSourceFileBytes {
+			continue
+		}
 		if data, err := os.ReadFile(resolved); err == nil {
 			return strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 		}
 	}
 	return nil
+}
+
+func supportedSourcePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".go", ".rs", ".cs", ".java", ".kt", ".kts":
+		return true
+	default:
+		return false
+	}
 }
 
 func pathWithinRoot(root, path string) bool {

@@ -264,6 +264,22 @@ func TestAnalyzeChangesDoesNotRequireCoverageForDeclarationOnlyGoFile(t *testing
 	}
 }
 
+func TestAnalyzeChangesDoesNotReadOutsideSourceRoot(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "repo")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(parent, "secret.go"), "package secret\n\nconst Token = \"do-not-read\"\n")
+	r := &model.Report{Root: root}
+	r.Normalize()
+	Evaluate(r, "")
+	AnalyzeChanges(r, "HEAD", map[string][]int{"../secret.go": {1, 2, 3}})
+	if r.Quality.Changes.FilesWithoutCoverage != 1 || !r.Quality.Changes.Files[0].CoverageRequired {
+		t.Fatalf("outside file influenced coverage requirement: %+v", r.Quality.Changes)
+	}
+}
+
 func TestChangedFileCoverageRejectsAmbiguousSuffixMatch(t *testing.T) {
 	files := []model.FileCoverage{
 		{Path: "module-a/src/service.go", LineHits: []model.LineHit{{Line: 1, Hits: 1}}},
@@ -296,6 +312,30 @@ func TestGitChangedLinesIncludesTrackedAndUntrackedFiles(t *testing.T) {
 	}
 	if len(changed["app.go"]) == 0 || !reflect.DeepEqual(changed["new.go"], []int{1, 2, 3}) {
 		t.Errorf("Git changes = %+v", changed)
+	}
+}
+
+func TestGitChangedLinesDoesNotFollowUntrackedSourceSymlink(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	runGit(t, root, "init", "-q")
+	write(t, filepath.Join(root, "README.md"), "base\n")
+	runGit(t, root, "add", "README.md")
+	runGit(t, root, "-c", "user.name=test-cli", "-c", "user.email=test@example.invalid", "commit", "-qm", "base")
+
+	outside := filepath.Join(t.TempDir(), "outside.go")
+	write(t, outside, "package outside\n\nfunc Secret() {}\n")
+	if err := os.Symlink(outside, filepath.Join(root, "linked.go")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	changed, err := GitChangedLines(root, "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := changed["linked.go"]; !reflect.DeepEqual(got, []int{1}) {
+		t.Fatalf("symlink target was followed: lines = %v", got)
 	}
 }
 

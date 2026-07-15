@@ -29,9 +29,17 @@ func Run(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "-h", "--help", "help":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "test-cli: help does not accept positional arguments")
+			return ExitUsage
+		}
 		printHelp(stdout)
 		return ExitOK
 	case "-v", "--version", "version":
+		if len(args) != 1 {
+			fmt.Fprintln(stderr, "test-cli: version does not accept positional arguments")
+			return ExitUsage
+		}
 		fmt.Fprintln(stdout, version.String())
 		return ExitOK
 	case "run", "scan", "diagnose":
