@@ -62,6 +62,50 @@ func TestRunRejectsInvalidSelectionsBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestHelpAndVersionRejectArguments(t *testing.T) {
+	for name, args := range map[string][]string{
+		"help":    {"help", "extra"},
+		"version": {"version", "extra"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != ExitUsage {
+				t.Fatalf("exit = %d, want %d; stderr=%s", code, ExitUsage, stderr.String())
+			}
+		})
+	}
+}
+
+func TestDetectAndDoctorRejectUnreadableTarget(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing")
+	for _, command := range []string{"detect", "doctor"} {
+		t.Run(command, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run([]string{command, missing}, &stdout, &stderr); code != ExitUsage {
+				t.Fatalf("exit = %d, want %d; stderr=%s", code, ExitUsage, stderr.String())
+			}
+		})
+	}
+}
+
+func TestRunRejectsInvalidThresholdTargetAndOutput(t *testing.T) {
+	validRoot := t.TempDir()
+	tests := map[string][]string{
+		"negative timeout": {"analyze", validRoot, "--timeout", "-1s"},
+		"threshold":        {"analyze", validRoot, "--fail-under", "101"},
+		"missing target":   {"analyze", filepath.Join(validRoot, "missing")},
+		"empty output":     {"analyze", validRoot, "--output-dir", " "},
+	}
+	for name, args := range tests {
+		t.Run(name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if code := Run(args, &stdout, &stderr); code != ExitUsage {
+				t.Fatalf("exit = %d, want %d; stderr=%s", code, ExitUsage, stderr.String())
+			}
+		})
+	}
+}
+
 func TestExplicitZeroThresholdOverridesProjectGate(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, ".test-cli.json"), []byte(`{"failUnder":80}`), 0o644); err != nil {
