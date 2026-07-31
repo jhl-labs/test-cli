@@ -137,3 +137,47 @@ func TestGoPackageLevelMapping(t *testing.T) {
 		t.Errorf("UnmappedSources = %d, want 0", static.UnmappedSources)
 	}
 }
+
+func TestJavaMirroredPackageMapping(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("src/main/java/com/x/Helper.java", "package com.x;\n\nclass Helper {\n  int f() { return 1; }\n}\n")
+	write("src/test/java/com/x/OtherTest.java", "package com.x;\n\nimport org.junit.Test;\n\nclass OtherTest {\n  @Test\n  void t() {\n    assertThat(new Helper().f());\n  }\n}\n")
+	static, _, ok := scanProject(root)
+	if !ok || len(static.TestMappings) != 1 {
+		t.Fatalf("mappings = %+v", static.TestMappings)
+	}
+	if len(static.TestMappings[0].TestPaths) != 1 {
+		t.Errorf("mirrored-package java test should map: %+v", static.TestMappings[0])
+	}
+}
+
+func TestPythonInitMapsByPackageName(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		path := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("src/mypkg/__init__.py", "def api():\n    return 1\n")
+	write("tests/test_stuff.py", "from mypkg import api\n\ndef test_api():\n    assert api() == 1\n")
+	static, _, ok := scanProject(root)
+	if !ok || len(static.TestMappings) != 1 {
+		t.Fatalf("mappings = %+v", static.TestMappings)
+	}
+	if len(static.TestMappings[0].TestPaths) != 1 {
+		t.Errorf("__init__.py should map via package name: %+v", static.TestMappings[0])
+	}
+}

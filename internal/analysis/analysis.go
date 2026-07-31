@@ -563,7 +563,10 @@ func isTestFile(path, language string) bool {
 
 func ignoredDir(name string) bool {
 	switch strings.ToLower(name) {
-	case ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target", "bin", "obj", "testdata", "__fixtures__", ".venv", "venv", ".tox", ".pytest_cache", ".mypy_cache", ".next", "coverage", "reports", "out":
+	case ".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "target", "bin", "obj", "testdata", "__fixtures__", ".venv", "venv", ".tox", ".pytest_cache", ".mypy_cache", ".next", "coverage", "reports", "out",
+		// Non-production code that would distort inventory, coverage
+		// expectations, and test-source mapping.
+		"docs", "examples", "example", "benchmarks", "bench", "fuzz":
 		return true
 	default:
 		return false

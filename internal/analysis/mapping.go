@@ -100,7 +100,12 @@ func mappedByName(language, sourceDir, sourceStem, testPath string) bool {
 	case "typescript":
 		return strings.HasPrefix(testBase, sourceStem+".test.") || strings.HasPrefix(testBase, sourceStem+".spec.")
 	case "java":
-		return testStem == sourceStem+"test" || testStem == sourceStem+"tests"
+		if testStem == sourceStem+"test" || testStem == sourceStem+"tests" {
+			return true
+		}
+		// Java tests conventionally mirror the package under src/test/java and
+		// can reference same-package classes without an import statement.
+		return strings.Replace(testDir, "/test/", "/main/", 1) == sourceDir
 	case "csharp":
 		return testStem == sourceStem+"test" || testStem == sourceStem+"tests"
 	case "rust":
@@ -122,7 +127,19 @@ func buildTestMappings(root string, sources []sourceFileStat, tests []testFileSt
 	for _, s := range sources {
 		base := strings.ToLower(filepath.Base(s.Path))
 		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		// Benchmark harness code is not expected to have tests.
+		if strings.HasSuffix(stem, "benchmark") || strings.HasSuffix(stem, "benchmarks") {
+			continue
+		}
 		dir := filepath.ToSlash(filepath.Dir(s.Path))
+		// Package entry points are imported by their package (directory) name,
+		// not their file name.
+		importStem := stem
+		if stem == "__init__" || stem == "index" || stem == "lib" || stem == "mod" {
+			if parent := strings.ToLower(filepath.Base(dir)); parent != "." && parent != "/" {
+				importStem = parent
+			}
+		}
 		m := model.TestMapping{SourcePath: s.Path, Language: s.Language, Heuristic: true}
 		if s.Language == "rust" && s.InlineTests {
 			m.TestPaths = append(m.TestPaths, s.Path)
@@ -134,8 +151,8 @@ func buildTestMappings(root string, sources []sourceFileStat, tests []testFileSt
 				continue
 			}
 			match := mappedByName(s.Language, dir, stem, t.Path)
-			if !match && len(stem) >= 3 {
-				match = strings.Contains(t.imports, stem)
+			if !match && len(importStem) >= 3 {
+				match = strings.Contains(t.imports, importStem)
 			}
 			if match {
 				m.TestPaths = append(m.TestPaths, t.Path)
