@@ -8,7 +8,9 @@ results into one **language-agnostic report**, adds an evidence-based quality
 assessment and portable static test-code checks, then renders machine-readable
 interchange (JSON, JUnit, Cobertura), human summaries (stdout, Markdown), and
 rich HTML visualizations (QA insights, trees, treemaps, risk matrices, and
-heatmaps), including multi-run trends and conservative flaky-test evidence.
+heatmaps), including multi-run trends and conservative flaky-test evidence,
+risk-weighted coverage hotspots (git churn × complexity × coverage gap), and
+heuristic test-source mapping with assertion-density diagnostics.
 
 It is built to be driven by **AI agents** and to run as a **GitHub Action**.
 
@@ -100,7 +102,7 @@ curl -fsSL https://jhl-labs.github.io/test-cli/install.sh | sudo bash
 
 # Pin a version into a directory:
 curl -fsSL https://jhl-labs.github.io/test-cli/install.sh \
-  | VERSION=v0.3.0 INSTALL_DIR="$HOME/.local/bin" bash
+  | VERSION=v0.4.0 INSTALL_DIR="$HOME/.local/bin" bash
 
 # From source:
 go install github.com/jhl-labs/test-cli/cmd/test-cli@latest
