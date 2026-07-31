@@ -198,6 +198,44 @@ func findings(r *model.Report, q model.QualityReport) []model.QualityFinding {
 	if q.Static.SourceLines >= 200 && q.Static.TestToSourceRatio < 0.15 {
 		add("STATIC-002", "medium", "test-design", "Low test-code density", "The amount of test code is small relative to production code; this is a prioritization signal, not a coverage substitute.", fmt.Sprintf("%.2f test/source LOC ratio", q.Static.TestToSourceRatio), "Review the coverage risk map and add focused tests around high-change or high-impact behavior.")
 	}
+	if q.Static.UnmappedSources > 0 {
+		severity := "medium"
+		if r.Risk != nil {
+			topRisk := map[string]bool{}
+			for _, f := range r.Risk.Files {
+				if f.RiskScore >= 0.6 {
+					topRisk[f.Path] = true
+				}
+			}
+			for _, m := range q.Static.TestMappings {
+				if len(m.TestPaths) == 0 && topRisk[m.SourcePath] {
+					severity = "high"
+					break
+				}
+			}
+		}
+		add("STATIC-007", severity, "test-design", "Source files without mapped tests", "Heuristic name/import mapping found production source files that no test file appears to exercise.", fmt.Sprintf("%d unmapped source file(s); see quality.static.testMappings", q.Static.UnmappedSources), "Add conventionally named tests for the unmapped files, starting with any that also appear in report.risk.")
+	}
+	if mapped := q.Static.TestMappings; len(mapped) > 0 {
+		totalAsserts, totalFuncs, smokeFiles, filesWithTests := 0, 0, 0, 0
+		for _, m := range mapped {
+			if len(m.TestPaths) == 0 {
+				continue
+			}
+			filesWithTests++
+			totalAsserts += m.AssertionCount
+			totalFuncs += m.TestFuncCount
+			if m.TestFuncCount > 0 && m.AssertionCount == 0 {
+				smokeFiles++
+			}
+		}
+		if filesWithTests > 0 && float64(smokeFiles)/float64(filesWithTests) >= 0.3 {
+			add("STATIC-008", "medium", "test-design", "Smoke-only tests without assertions", "A large share of mapped test files execute code without asserting on behavior, so coverage overstates verification.", fmt.Sprintf("%d of %d mapped source file(s) have tests with zero assertions", smokeFiles, filesWithTests), "Add assertions on observable behavior to the zero-assertion tests; execution without verification catches only crashes.")
+		}
+		if totalFuncs >= 10 && float64(totalAsserts)/float64(totalFuncs) < 1.0 {
+			add("STATIC-009", "low", "test-design", "Low assertion density", "Tests average fewer than one detected assertion each; weak assertions limit mutation resistance.", fmt.Sprintf("%d assertion(s) across %d test function(s)", totalAsserts, totalFuncs), "Strengthen tests around core behavior with explicit expected-value assertions.")
+		}
+	}
 	ruleMeta := map[string][4]string{
 		"focused-test":    {"STATIC-003", "high", "Focused tests are committed", "Remove .only/fdescribe/fit markers so the full suite cannot be accidentally narrowed."},
 		"disabled-test":   {"STATIC-004", "medium", "Disabled tests are present", "Give every disabled test a reason and expiry, or restore/remove it."},

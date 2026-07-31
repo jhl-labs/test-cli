@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/jhl-labs/test-cli/internal/model"
 )
 
 func TestCountTestSignalsGo(t *testing.T) {
@@ -95,5 +97,21 @@ func TestBuildTestMappingsRustInline(t *testing.T) {
 	}
 	if static.UnmappedSources != 0 {
 		t.Errorf("UnmappedSources = %d, want 0", static.UnmappedSources)
+	}
+}
+
+func TestMappingFindings(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "orphan.go"), []byte("package p\n\nfunc O() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &model.Report{}
+	Evaluate(r, root)
+	found := map[string]bool{}
+	for _, f := range r.Quality.Findings {
+		found[f.ID] = true
+	}
+	if !found["STATIC-007"] {
+		t.Errorf("expected STATIC-007, findings: %+v", r.Quality.Findings)
 	}
 }
