@@ -306,11 +306,17 @@ type sourceFileStat struct {
 	Lines      int
 	Branches   int
 	Complexity int // Lines + 3*Branches
+	// Rust keeps unit tests inline behind #[cfg(test)]; these fields let the
+	// mapping treat such a source file as self-tested.
+	InlineTests      bool
+	InlineAssertions int
+	InlineTestFuncs  int
 }
 
 func scanProject(root string) (model.StaticAnalysis, []sourceFileStat, bool) {
 	var out model.StaticAnalysis
 	var stats []sourceFileStat
+	var testStats []testFileStat
 	if root == "" {
 		return out, nil, false
 	}
@@ -362,11 +368,18 @@ func scanProject(root string) (model.StaticAnalysis, []sourceFileStat, bool) {
 			c.testFiles++
 			c.testLines += lines
 			scanTestSmells(&out, rel, language, data, lines)
+			asserts, funcs := countTestSignals(data, language)
+			testStats = append(testStats, testFileStat{Path: rel, Language: language, Assertions: asserts, TestFuncs: funcs, imports: importRefs(data)})
 		} else {
 			c.sourceFiles++
 			c.sourceLines += lines
 			branches := countBranches(data, language)
-			stats = append(stats, sourceFileStat{Path: rel, Language: language, Lines: lines, Branches: branches, Complexity: lines + 3*branches})
+			stat := sourceFileStat{Path: rel, Language: language, Lines: lines, Branches: branches, Complexity: lines + 3*branches}
+			if language == "rust" && strings.Contains(string(data), "#[cfg(test)]") {
+				stat.InlineTests = true
+				stat.InlineAssertions, stat.InlineTestFuncs = countTestSignals(data, language)
+			}
+			stats = append(stats, stat)
 		}
 		return nil
 	})
@@ -387,6 +400,7 @@ func scanProject(root string) (model.StaticAnalysis, []sourceFileStat, bool) {
 		out.TestToSourceRatio = math.Round(float64(out.TestLines)/float64(out.SourceLines)*100) / 100
 	}
 	sort.SliceStable(stats, func(i, j int) bool { return stats[i].Path < stats[j].Path })
+	out.TestMappings, out.UnmappedSources = buildTestMappings(root, stats, testStats)
 	sort.SliceStable(out.Smells, func(i, j int) bool {
 		if out.Smells[i].Path != out.Smells[j].Path {
 			return out.Smells[i].Path < out.Smells[j].Path
