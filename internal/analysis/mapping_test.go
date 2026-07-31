@@ -47,7 +47,7 @@ func TestBuildTestMappingsByNameAndImport(t *testing.T) {
 	}
 	mustWrite("pkg/util.go", "package pkg\n\nfunc Util() int { return 1 }\n")
 	mustWrite("pkg/util_test.go", "package pkg\n\nimport \"testing\"\n\nfunc TestUtil(t *testing.T) {\n\tif Util() != 1 {\n\t\tt.Error(\"bad\")\n\t}\n}\n")
-	mustWrite("pkg/orphan.go", "package pkg\n\nfunc Orphan() int { return 2 }\n")
+	mustWrite("other/orphan.go", "package other\n\nfunc Orphan() int { return 2 }\n")
 
 	_, stats, ok := scanProject(root)
 	if !ok {
@@ -59,7 +59,7 @@ func TestBuildTestMappingsByNameAndImport(t *testing.T) {
 	}
 	// Unmapped sources sort first.
 	first := static.TestMappings[0]
-	if first.SourcePath != "pkg/orphan.go" || len(first.TestPaths) != 0 {
+	if first.SourcePath != "other/orphan.go" || len(first.TestPaths) != 0 {
 		t.Errorf("expected orphan first: %+v", first)
 	}
 	second := static.TestMappings[1]
@@ -113,5 +113,27 @@ func TestMappingFindings(t *testing.T) {
 	}
 	if !found["STATIC-007"] {
 		t.Errorf("expected STATIC-007, findings: %+v", r.Quality.Findings)
+	}
+}
+
+func TestGoPackageLevelMapping(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(root, rel), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("changes.go", "package p\n\nfunc C() int { return 1 }\n")
+	write("analysis_test.go", "package p\n\nimport \"testing\"\n\nfunc TestC(t *testing.T) {\n\tif C() != 1 {\n\t\tt.Error(\"bad\")\n\t}\n}\n")
+	static, _, ok := scanProject(root)
+	if !ok || len(static.TestMappings) != 1 {
+		t.Fatalf("mappings = %+v", static.TestMappings)
+	}
+	m := static.TestMappings[0]
+	if len(m.TestPaths) != 1 || m.TestPaths[0] != "analysis_test.go" {
+		t.Errorf("same-package go test should map differently named source: %+v", m)
+	}
+	if static.UnmappedSources != 0 {
+		t.Errorf("UnmappedSources = %d, want 0", static.UnmappedSources)
 	}
 }

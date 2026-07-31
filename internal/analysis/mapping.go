@@ -91,7 +91,10 @@ func mappedByName(language, sourceDir, sourceStem, testPath string) bool {
 	testStem := strings.TrimSuffix(testBase, filepath.Ext(testBase))
 	switch language {
 	case "go":
-		return testDir == sourceDir && testStem == sourceStem+"_test"
+		// Go tests exercise their whole package: any _test.go in the same
+		// directory covers every sibling source file, whether or not the
+		// filenames correspond.
+		return testDir == sourceDir && strings.HasSuffix(testStem, "_test")
 	case "python":
 		return testStem == "test_"+sourceStem || testStem == sourceStem+"_test"
 	case "typescript":
