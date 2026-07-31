@@ -332,3 +332,44 @@ func sampleChanges() *model.ChangeAnalysis {
 		Files: []model.ChangedFileCoverage{{Path: "a.go", CoveragePath: "a.go", Language: "go", ChangedLines: 3, CoverableLines: 2, CoveredLines: 1, UncoveredLines: 1, UnmappedLines: 1, CoveragePct: 50, CoverageReported: true, UncoveredLineNumbers: []int{2}}},
 	}
 }
+
+func TestMarkdownIncludesRiskHotspots(t *testing.T) {
+	r := sampleReport()
+	r.Risk = &model.RiskAnalysis{Base: "90 days", Files: []model.RiskFile{{Path: "hot.go", Churn: 7, Complexity: 120, CoveragePct: 12.5, RiskScore: 0.81}}}
+	dir := t.TempDir()
+	if _, err := Write(r, FormatMarkdown, dir, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "report.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(data)
+	if !strings.Contains(out, "Risk hotspots") || !strings.Contains(out, "hot.go") || !strings.Contains(out, "0.81") {
+		t.Errorf("markdown missing risk section:\n%s", out)
+	}
+	r.Risk = nil
+	if _, err := Write(r, FormatMarkdown, dir, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, "report.md"))
+	if strings.Contains(string(data), "Risk hotspots") {
+		t.Error("risk section should be omitted when nil")
+	}
+}
+
+func TestHTMLIncludesRiskHotspots(t *testing.T) {
+	r := sampleReport()
+	r.Risk = &model.RiskAnalysis{Base: "90 days", Files: []model.RiskFile{{Path: "hot.go", Churn: 7, Complexity: 120, CoveragePct: 12.5, RiskScore: 0.81}}}
+	dir := t.TempDir()
+	if _, err := Write(r, FormatHTML, dir, "/repo"); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "insights.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "Risk hotspots") || !strings.Contains(string(data), "hot.go") {
+		t.Errorf("html missing risk section")
+	}
+}

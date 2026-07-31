@@ -293,6 +293,16 @@ func writeMarkdown(r *model.Report, path string) error {
 		b.WriteString("\n")
 	}
 
+	if r.Risk != nil && len(r.Risk.Files) > 0 {
+		fmt.Fprintf(&b, "## Risk hotspots (churn x complexity x coverage gap, last %s)\n\n", r.Risk.Base)
+		b.WriteString("| File | Churn | Complexity | Coverage | Risk score |\n|---|---:|---:|---:|---:|\n")
+		limit := min(10, len(r.Risk.Files))
+		for _, f := range r.Risk.Files[:limit] {
+			fmt.Fprintf(&b, "| `%s` | %d | %d | %s | %.2f |\n", markdownInline(f.Path), f.Churn, f.Complexity, pct1(f.CoveragePct), f.RiskScore)
+		}
+		b.WriteString("\n")
+	}
+
 	if len(r.Quality.SlowTests) > 0 {
 		b.WriteString("## Slow tests (current run)\n\n")
 		b.WriteString("| Test | Suite | Duration |\n|---|---|---:|\n")

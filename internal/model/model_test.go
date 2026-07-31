@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestNormalizeRollups(t *testing.T) {
 	r := &Report{
@@ -106,5 +109,33 @@ func TestNormalizeRejectsInvalidPassingEvidence(t *testing.T) {
 	}
 	if f.Branches.Covered != 2 || f.Branches.Total != 2 || f.Branches.Pct != 100 {
 		t.Fatalf("branch metric was not clamped: %+v", f.Branches)
+	}
+}
+
+func TestRiskOmittedWhenNil(t *testing.T) {
+	r := &Report{}
+	r.Normalize()
+	data, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := top["risk"]; ok {
+		t.Errorf("nil risk should be omitted: %s", data)
+	}
+	r.Risk = &RiskAnalysis{Base: "90 days", Files: []RiskFile{{Path: "a.go", Churn: 3, Complexity: 40, CoveragePct: 10, RiskScore: 0.7}}}
+	data, err = json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back Report
+	if err := json.Unmarshal(data, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Risk == nil || back.Risk.Files[0].RiskScore != 0.7 {
+		t.Errorf("risk round-trip failed: %+v", back.Risk)
 	}
 }

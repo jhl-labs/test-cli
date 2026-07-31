@@ -36,6 +36,7 @@ type Report struct {
 	Test        TestReport     `json:"test"`
 	Coverage    CoverageReport `json:"coverage"`
 	Quality     QualityReport  `json:"quality"`
+	Risk        *RiskAnalysis  `json:"risk,omitempty"`
 	Messages    []string       `json:"messages,omitempty"`
 }
 

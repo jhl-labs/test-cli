@@ -56,7 +56,13 @@ Key fields:
 - `coverage.files[]` → per-file `lines`/`branches` and `lineHits[]`
 - `quality` → transparent `score`, `grade`, `risk`, weighted `dimensions[]`,
   stable actionable `findings[]`, `slowTests[]`, and `coverageHotspots[]`
-- `quality.static` → per-language source/test inventory and located test smells
+- `quality.static` → per-language source/test inventory and located test smells,
+  plus heuristic `testMappings[]` (source file → mapped test files with
+  assertion/test-function counts; `heuristic` is always true, so treat mappings
+  as a prioritization signal, not proof) and `unmappedSources`
+- `risk` → churn × complexity × coverage-gap hotspots ranked by `riskScore`
+  (0..1); present only when the project root is a git repository. Use the top
+  entries to decide where to add tests first.
 - `quality.comparison` → score/test/duration/coverage deltas, new and resolved
   failures, file-level regressions/improvements, and `regressed`
 - `quality.history` → multi-run metric slopes/samples and `flakyTests[]` with

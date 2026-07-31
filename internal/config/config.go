@@ -41,6 +41,9 @@ type Config struct {
 	// FailDiffCoverage fails when changed executable-line coverage is below the
 	// configured percentage (0 disables the gate).
 	FailDiffCoverage float64 `json:"failDiffCoverage"`
+	// RiskChurnDays sets the git history window (in days) used for the
+	// risk-weighted coverage analysis (0 keeps the built-in 90-day default).
+	RiskChurnDays int `json:"riskChurnDays"`
 	// Commands overrides the default test command for a language, e.g.
 	// {"typescript": [["npx","vitest","run","--coverage"]]}. Each command is an
 	// argv slice; {out} and {root} placeholders are supported.
@@ -147,6 +150,9 @@ func merge(base *Config, override Config) {
 	}
 	if override.FailDiffCoverage > 0 {
 		base.FailDiffCoverage = override.FailDiffCoverage
+	}
+	if override.RiskChurnDays > 0 {
+		base.RiskChurnDays = override.RiskChurnDays
 	}
 	if len(override.Commands) > 0 {
 		base.Commands = override.Commands

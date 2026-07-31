@@ -393,6 +393,15 @@ type insightsView struct {
 	CoverageImprovements []comparisonCoverageRow
 	HistorySamples       []historySampleRow
 	ChangeFiles          []changeFileRow
+	RiskBase             string
+	RiskFiles            []riskFileRow
+}
+
+type riskFileRow struct {
+	model.RiskFile
+	Slug  string
+	Grade string
+	Score string
 }
 
 type slowTestRow struct {
@@ -486,6 +495,12 @@ func buildInsights(r *model.Report) insightsView {
 				}
 			}
 			v.ChangeFiles = append(v.ChangeFiles, row)
+		}
+	}
+	if r.Risk != nil {
+		v.RiskBase = r.Risk.Base
+		for _, f := range r.Risk.Files {
+			v.RiskFiles = append(v.RiskFiles, riskFileRow{RiskFile: f, Slug: slugFor(f.Path), Grade: gradeClass(f.CoveragePct), Score: fmt.Sprintf("%.2f", f.RiskScore)})
 		}
 	}
 	maxDuration := 0.0

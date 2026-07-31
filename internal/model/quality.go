@@ -61,6 +61,40 @@ type StaticAnalysis struct {
 	TestToSourceRatio float64             `json:"testToSourceRatio"`
 	Inventory         []LanguageInventory `json:"inventory,omitempty"`
 	Smells            []StaticSmell       `json:"smells,omitempty"`
+	TestMappings      []TestMapping       `json:"testMappings,omitempty"`
+	UnmappedSources   int                 `json:"unmappedSources"`
+}
+
+// RiskAnalysis ranks source files by combined regression risk derived from git
+// churn, a complexity approximation, and the coverage gap. It is omitted when
+// the project root is not a usable git repository.
+type RiskAnalysis struct {
+	Base  string     `json:"base"`
+	Files []RiskFile `json:"files,omitempty"`
+}
+
+// RiskFile is one ranked entry of the risk analysis. RiskScore is a normalized
+// 0..1 product of within-project churn and complexity percentiles and the
+// uncovered fraction, so any near-zero axis suppresses the score.
+type RiskFile struct {
+	Path        string  `json:"path"`
+	Language    string  `json:"language,omitempty"`
+	Churn       int     `json:"churn"`
+	Complexity  int     `json:"complexity"`
+	CoveragePct float64 `json:"coveragePct"`
+	RiskScore   float64 `json:"riskScore"`
+}
+
+// TestMapping links one production source file to the test files that appear
+// to exercise it. The mapping is name/import-heuristic based; Heuristic is
+// always true so consumers do not over-trust it.
+type TestMapping struct {
+	SourcePath     string   `json:"sourcePath"`
+	Language       string   `json:"language,omitempty"`
+	TestPaths      []string `json:"testPaths,omitempty"`
+	AssertionCount int      `json:"assertionCount"`
+	TestFuncCount  int      `json:"testFuncCount"`
+	Heuristic      bool     `json:"heuristic"`
 }
 
 // LanguageInventory is a per-language source/test code inventory.
