@@ -154,3 +154,11 @@ func TestConfigTracksExplicitFormats(t *testing.T) {
 		t.Fatal("built-in default must remain profile-overridable")
 	}
 }
+
+func TestRiskChurnDaysMerge(t *testing.T) {
+	base := Default()
+	merge(&base, Config{RiskChurnDays: 30})
+	if base.RiskChurnDays != 30 {
+		t.Errorf("RiskChurnDays = %d, want 30", base.RiskChurnDays)
+	}
+}

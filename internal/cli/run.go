@@ -178,6 +178,9 @@ func execute(args []string, stdout, stderr io.Writer, ingestMode, analyzeMode bo
 		fmt.Fprintln(stderr, "test-cli: --fail-on-flaky requires at least two --history reports (or config history)")
 		return ExitUsage
 	}
+	if cfg.RiskChurnDays > 0 {
+		analysis.ChurnWindowDays = cfg.RiskChurnDays
+	}
 	diffBase := cf.diffBase
 	if !flagProvided(fs, "diff-base") {
 		diffBase = cfg.DiffBase

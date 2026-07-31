@@ -165,6 +165,17 @@
   </section>
   {{end}}
 
+  {{if .RiskFiles}}
+  <section>
+    <h2>Risk hotspots · churn × complexity × coverage gap (last {{.RiskBase}})</h2>
+    <table>
+      <thead><tr><th>File</th><th class="num">Churn</th><th class="num">Complexity</th><th class="num">Coverage</th><th class="num">Risk score</th></tr></thead>
+      <tbody>{{range .RiskFiles}}<tr><td>{{.Path}}</td><td class="num">{{.Churn}}</td><td class="num">{{.Complexity}}</td><td class="num"><span class="pill g-{{.Grade}}">{{pct1 .CoveragePct}}</span></td><td class="num">{{.Score}}</td></tr>{{end}}</tbody>
+    </table>
+    <div class="method-note">Risk combines within-project churn and complexity percentiles with the uncovered fraction; a fully covered file scores near zero regardless of churn.</div>
+  </section>
+  {{end}}
+
   <section>
     <h2>Static test-code analysis</h2>
     {{if .HasStaticAnalysis}}
