@@ -35,9 +35,11 @@ func Evaluate(r *model.Report, root string) {
 		}
 	}
 	q := model.QualityReport{Static: r.Quality.Static, Comparison: previousComparison, History: previousHistory, Changes: previousChanges}
+	var sourceStats []sourceFileStat
 	if root != "" {
-		if scanned, ok := scanProject(root); ok {
+		if scanned, stats, ok := scanProject(root); ok {
 			q.Static = scanned
+			sourceStats = stats
 		}
 	}
 	if len(r.Languages) == 0 {
@@ -50,7 +52,9 @@ func Evaluate(r *model.Report, root string) {
 	}
 	q.SlowTests = slowTests(r)
 	q.CoverageHotspots = coverageHotspots(r)
+	r.Risk = analyzeRisk(r, root, sourceStats)
 	q.Findings = findings(r, q)
+	q.Findings = append(q.Findings, riskFindings(r)...)
 	q.Findings = append(q.Findings, previousDerivedFindings...)
 	sort.SliceStable(q.Findings, func(i, j int) bool {
 		a, b := severityRank(q.Findings[i].Severity), severityRank(q.Findings[j].Severity)
@@ -294,18 +298,29 @@ func coverageHotspots(r *model.Report) []model.CoverageHotspot {
 	return out
 }
 
-func scanProject(root string) (model.StaticAnalysis, bool) {
+// sourceFileStat carries the per-file evidence collected during the single
+// scanProject walk that risk analysis combines with git churn and coverage.
+type sourceFileStat struct {
+	Path       string // slash-separated, relative to root
+	Language   string
+	Lines      int
+	Branches   int
+	Complexity int // Lines + 3*Branches
+}
+
+func scanProject(root string) (model.StaticAnalysis, []sourceFileStat, bool) {
 	var out model.StaticAnalysis
+	var stats []sourceFileStat
 	if root == "" {
-		return out, false
+		return out, nil, false
 	}
 	info, err := os.Stat(root)
 	if err != nil || !info.IsDir() {
-		return out, false
+		return out, nil, false
 	}
 	resolvedRoot, err := filepath.EvalSymlinks(root)
 	if err != nil {
-		return out, false
+		return out, nil, false
 	}
 	root = resolvedRoot
 	type counts struct{ sourceFiles, testFiles, sourceLines, testLines int }
@@ -350,6 +365,8 @@ func scanProject(root string) (model.StaticAnalysis, bool) {
 		} else {
 			c.sourceFiles++
 			c.sourceLines += lines
+			branches := countBranches(data, language)
+			stats = append(stats, sourceFileStat{Path: rel, Language: language, Lines: lines, Branches: branches, Complexity: lines + 3*branches})
 		}
 		return nil
 	})
@@ -369,6 +386,7 @@ func scanProject(root string) (model.StaticAnalysis, bool) {
 	if out.SourceLines > 0 {
 		out.TestToSourceRatio = math.Round(float64(out.TestLines)/float64(out.SourceLines)*100) / 100
 	}
+	sort.SliceStable(stats, func(i, j int) bool { return stats[i].Path < stats[j].Path })
 	sort.SliceStable(out.Smells, func(i, j int) bool {
 		if out.Smells[i].Path != out.Smells[j].Path {
 			return out.Smells[i].Path < out.Smells[j].Path
@@ -378,7 +396,50 @@ func scanProject(root string) (model.StaticAnalysis, bool) {
 		}
 		return out.Smells[i].Rule < out.Smells[j].Rule
 	})
-	return out, true
+	return out, stats, true
+}
+
+// countBranches approximates decision-point density with per-language branch
+// keywords counted on non-comment, non-literal text. It is a ranking signal
+// for risk analysis, not a strict cyclomatic complexity metric.
+func countBranches(data []byte, language string) int {
+	keywords := map[string]bool{"if": true, "for": true, "case": true}
+	switch language {
+	case "python":
+		keywords["while"] = true
+		keywords["elif"] = true
+		keywords["except"] = true
+	case "typescript", "java", "csharp":
+		keywords["while"] = true
+		keywords["catch"] = true
+		keywords["switch"] = true
+	case "go":
+		keywords["select"] = true
+		keywords["switch"] = true
+	case "rust":
+		keywords["while"] = true
+		keywords["match"] = true
+	}
+	count := 0
+	sc := bufio.NewScanner(strings.NewReader(string(data)))
+	var quote rune
+	escaped := false
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "/*") || strings.HasPrefix(line, "*") || (language == "python" && strings.HasPrefix(line, "#")) {
+			continue
+		}
+		code := stripQuotedLiteralsState(line, &quote, &escaped)
+		count += strings.Count(code, "&&") + strings.Count(code, "||")
+		for _, token := range strings.FieldsFunc(code, func(r rune) bool {
+			return !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '_')
+		}) {
+			if keywords[token] {
+				count++
+			}
+		}
+	}
+	return count
 }
 
 func sourceLanguage(name string) string {

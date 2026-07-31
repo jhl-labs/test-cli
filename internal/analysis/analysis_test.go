@@ -435,3 +435,43 @@ func hasSmell(smells []model.StaticSmell, rule string) bool {
 	}
 	return false
 }
+
+func TestCountBranches(t *testing.T) {
+	src := []byte(`package p
+
+func f(a, b int) int {
+	// if for case in a comment should not count
+	s := "if for case"
+	if a > 0 && b > 0 {
+		for i := 0; i < a; i++ {
+			switch i {
+			case 1:
+				return i
+			}
+		}
+	}
+	_ = s
+	return 0
+}
+`)
+	// if(1) + &&(1) + for(1) + switch(1) + case(1) = 5
+	if got := countBranches(src, "go"); got != 5 {
+		t.Errorf("countBranches = %d, want 5", got)
+	}
+}
+
+func TestScanProjectCollectsSourceStats(t *testing.T) {
+	root := t.TempDir()
+	src := "package p\n\nfunc F(a int) int {\n\tif a > 0 {\n\t\treturn a\n\t}\n\treturn 0\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "f.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, stats, ok := scanProject(root)
+	if !ok || len(stats) != 1 {
+		t.Fatalf("stats = %+v, ok = %v", stats, ok)
+	}
+	s := stats[0]
+	if s.Path != "f.go" || s.Language != "go" || s.Branches != 1 || s.Complexity != s.Lines+3 {
+		t.Errorf("unexpected stat: %+v", s)
+	}
+}
